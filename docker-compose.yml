@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  # The FastAPI application service
+  summarizer-api:
+    # Build the Docker image from the Dockerfile in the current directory
+    build: .
+    # Forward the exposed port 8000 from the container to port 8000 on the host machine
+    ports:
+      - "8000:8000"
+    # Load environment variables from a .env file in the same directory
+    # The user must create this file from the .env.example template
+    env_file:
+      - .env
+    # This service depends on the 'redis' service.
+    # Docker Compose will start 'redis' before starting 'summarizer-api'
+    depends_on:
+      - redis
+    # Add a healthcheck to ensure the API is running before it's considered "up"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    container_name: email_summarizer_api
+
+  # The Redis caching service
+  redis:
+    # Use a standard Redis image from Docker Hub
+    image: "redis:7-alpine"
+    # Expose the Redis port to other services in the same Docker network
+    # (but not to the host machine, for security)
+    expose:
+      - "6379"
+    # Add a healthcheck to ensure Redis is ready before other services start
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    container_name: email_summarizer_redis
+
+# Networks for services to communicate
+# By default, docker-compose sets up a single network for your app
+networks:
+  default:
+    driver: bridge 

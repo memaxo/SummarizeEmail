@@ -1,0 +1,98 @@
+openapi: 3.0.1
+info:
+  title: Outlook Email Summarizer API
+  description: >-
+    An API that accepts a Microsoft Outlook message ID and returns a concise
+    summary of the email's content. This is designed to be used as an action
+    in a custom GPT.
+  version: 1.0.0
+servers:
+  # The server URL should be the publicly accessible endpoint where your
+  # FastAPI service is hosted. You will need to replace this with your actual URL.
+  # For local testing, you can use ngrok or a similar tunneling service.
+  - url: https://your-public-api-endpoint.com
+    description: Production Server
+paths:
+  /summarize:
+    get:
+      summary: Summarize an Email
+      description: >-
+        Fetches an email by its Microsoft Graph message ID, generates a
+        summary, and returns it.
+      operationId: summarizeEmail
+      parameters:
+        - name: msg_id
+          in: query
+          required: true
+          description: The unique and immutable ID of the email message from Microsoft Graph API.
+          schema:
+            type: string
+          example: AAMkAGI1ZTMxZDMtMmVkMy00NDk2LWJjM2EtYmEzZDEyMmRlMjU1BGAAAAAADo_9ADdDR4RIi_y4aYq1uBwC_2SYa0AABkAAAAAAEMAAC_2SYa0AAAkAAAAACiAAA=
+      responses:
+        '200':
+          description: Successfully retrieved and generated the email summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  summary:
+                    type: string
+                    description: The generated summary of the email.
+                  message_id:
+                    type: string
+                    description: The ID of the email that was summarized.
+                  cached:
+                    type: boolean
+                    description: Whether the result was served from the cache.
+                  llm_provider:
+                    type: string
+                    description: The LLM provider used for summarization.
+              example:
+                summary: "The project kickoff meeting is confirmed for next Tuesday at 10 AM. Key stakeholders are expected to attend to discuss the project timeline and initial deliverables. Please review the attached pre-read document."
+                message_id: "AAMkAGI1ZTMx..."
+                cached: false
+                llm_provider: "openai"
+        '400':
+          description: Bad Request - The 'msg_id' parameter was missing or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not Found - No email message could be found for the provided 'msg_id'.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Too Many Requests - The client has exceeded the rate limit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal Server Error - An unexpected error occurred on the server.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: Bad Gateway - An error occurred while communicating with an upstream API (e.g., Microsoft Graph).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  schemas:
+    Error:
+      type: object
+      properties:
+        detail:
+          type: string
+          description: A clear, human-readable error message.
+      required:
+        - detail
+      example:
+        detail: "Email with message_id 'xyz' not found." 
