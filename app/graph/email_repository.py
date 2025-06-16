@@ -13,10 +13,19 @@ logger = structlog.get_logger(__name__)
 class EmailRepository:
     """
     Handles all interactions with the Microsoft Graph API for emails.
+    Now supports dynamic user IDs for multi-tenant scenarios.
     """
 
-    def __init__(self):
-        self._base_url = f"https://graph.microsoft.com/v1.0/users/{settings.TARGET_USER_ID}"
+    def __init__(self, user_id: Optional[str] = None):
+        """
+        Initialize the repository with a specific user ID.
+        
+        Args:
+            user_id: The user ID to use for Graph API calls. 
+                    If None, falls back to TARGET_USER_ID from settings.
+        """
+        self.user_id = user_id or settings.TARGET_USER_ID
+        self._base_url = f"https://graph.microsoft.com/v1.0/users/{self.user_id}"
 
     def get_message(self, message_id: str) -> Email:
         """
@@ -38,7 +47,7 @@ class EmailRepository:
             "$select": "id,subject,body,from,toRecipients,ccRecipients,sentDateTime"
         }
         
-        logger.info("Fetching email from Graph API", message_id=message_id)
+        logger.info("Fetching email from Graph API", message_id=message_id, user_id=self.user_id)
         
         try:
             response = requests.get(endpoint, headers=headers, params=params)
@@ -107,7 +116,7 @@ class EmailRepository:
         if filters:
             params["$filter"] = " and ".join(filters)
 
-        logger.info("Fetching email list from Graph API", filter=params.get("$filter"), search=params.get("$search"))
+        logger.info("Fetching email list from Graph API", filter=params.get("$filter"), search=params.get("$search"), user_id=self.user_id)
 
         try:
             response = requests.get(endpoint, headers=headers, params=params)
@@ -136,7 +145,7 @@ class EmailRepository:
         headers = self._get_auth_headers()
         params = {"$select": "id,name,contentType,size,isInline"}
 
-        logger.info("Fetching attachments for message", message_id=message_id)
+        logger.info("Fetching attachments for message", message_id=message_id, user_id=self.user_id)
         
         try:
             response = requests.get(endpoint, headers=headers, params=params)
@@ -167,7 +176,7 @@ class EmailRepository:
         endpoint = f"{self._base_url}/messages/{message_id}/attachments/{attachment_id}"
         headers = self._get_auth_headers()
         
-        logger.info("Fetching single attachment", message_id=message_id, attachment_id=attachment_id)
+        logger.info("Fetching single attachment", message_id=message_id, attachment_id=attachment_id, user_id=self.user_id)
 
         try:
             response = requests.get(endpoint, headers=headers)
@@ -194,5 +203,6 @@ class EmailRepository:
             # Re-raise to be handled by the calling method
             raise e
 
-# Create a single, reusable instance of the repository
+# Create a single, reusable instance of the repository for backward compatibility
+# In production with Custom GPT, create instances with specific user IDs
 email_repository = EmailRepository() 

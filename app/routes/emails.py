@@ -1,10 +1,11 @@
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 
-from ..graph.email_repository import email_repository
+from ..graph.email_repository import EmailRepository
 from ..graph.models import Email
+from ..services.email import get_user_id_from_token
 
 router = APIRouter(
     prefix="/emails",
@@ -12,7 +13,8 @@ router = APIRouter(
 )
 
 @router.get("/", response_model=List[Email])
-def search_emails(
+async def search_emails(
+    request: Request,
     search: Optional[str] = Query(None, description="A free-text search query (uses Graph's $search)."),
     from_address: Optional[str] = Query(None, description="Filter by the sender's email address."),
     subject_contains: Optional[str] = Query(None, description="Filter by a keyword in the subject."),
@@ -23,8 +25,16 @@ def search_emails(
 ):
     """
     Searches for emails based on a powerful, free-text query and other filters.
+    
+    In production with Custom GPT, this uses the authenticated user's ID from the OAuth token.
     """
-    emails = email_repository.list_messages(
+    # Get user ID from OAuth token or fall back to TARGET_USER_ID
+    user_id = await get_user_id_from_token(request)
+    
+    # Create a repository instance for this specific user
+    email_repo = EmailRepository(user_id=user_id)
+    
+    emails = email_repo.list_messages(
         search=search,
         from_address=from_address,
         subject_contains=subject_contains,

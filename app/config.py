@@ -45,6 +45,9 @@ class Settings(BaseSettings):
 
     # RAG Ingestion Scheduling
     RAG_INGESTION_INTERVAL_HOURS: int = 24
+    
+    # Environment
+    ENVIRONMENT: str = "development"  # "development" or "production"
 
     # Load settings from a .env file
     model_config = SettingsConfigDict(

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from .. import services
 from ..config import settings
-from ..graph.email_repository import email_repository
+from ..graph.email_repository import EmailRepository
 from ..graph.models import Attachment, Email
 from ..models import ErrorResponse, SummarizeResponse, SummaryResponse, Summary
 from ..database import get_db, get_redis
@@ -19,11 +19,22 @@ router = APIRouter(
 )
 
 @router.get("/{msg_id}", response_model=Email)
-def get_message(msg_id: str = Path(..., description="The ID of the email to retrieve.")):
+async def get_message(
+    msg_id: str,
+    request: Request
+):
     """
-    Retrieves a single email message by its ID.
+    Retrieves a specific email message by its ID.
+    
+    In production with Custom GPT, this uses the authenticated user's ID from the OAuth token.
     """
-    return email_repository.get_message(msg_id)
+    # Get user ID from OAuth token or fall back to TARGET_USER_ID
+    user_id = await services.get_user_id_from_token(request)
+    
+    # Create a repository instance for this specific user
+    email_repo = EmailRepository(user_id=user_id)
+    
+    return email_repo.get_message(msg_id)
 
 @router.post("/{msg_id}/summary", response_model=SummaryResponse)
 async def summarize_message(
@@ -110,18 +121,38 @@ async def summarize_message(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/{msg_id}/attachments", response_model=List[Attachment])
-def list_attachments(msg_id: str = Path(..., description="The ID of the email.")):
-    """
-    Lists all attachments for a specific email message.
-    """
-    return email_repository.list_attachments(msg_id)
-
-@router.get("/{msg_id}/attachments/{att_id}", response_model=Attachment)
-def get_attachment(
-    msg_id: str = Path(..., description="The ID of the email."),
-    att_id: str = Path(..., description="The ID of the attachment.")
+async def list_attachments(
+    msg_id: str,
+    request: Request
 ):
     """
-    Retrieves a single attachment, including its content bytes.
+    Lists all attachments for a specific email message.
+    
+    In production with Custom GPT, this uses the authenticated user's ID from the OAuth token.
     """
-    return email_repository.get_attachment(message_id=msg_id, attachment_id=att_id) 
+    # Get user ID from OAuth token or fall back to TARGET_USER_ID
+    user_id = await services.get_user_id_from_token(request)
+    
+    # Create a repository instance for this specific user
+    email_repo = EmailRepository(user_id=user_id)
+    
+    return email_repo.list_attachments(msg_id)
+
+@router.get("/{msg_id}/attachments/{att_id}", response_model=Attachment)
+async def get_attachment(
+    msg_id: str,
+    att_id: str,
+    request: Request
+):
+    """
+    Retrieves a specific attachment from an email message.
+    
+    In production with Custom GPT, this uses the authenticated user's ID from the OAuth token.
+    """
+    # Get user ID from OAuth token or fall back to TARGET_USER_ID
+    user_id = await services.get_user_id_from_token(request)
+    
+    # Create a repository instance for this specific user
+    email_repo = EmailRepository(user_id=user_id)
+    
+    return email_repo.get_attachment(message_id=msg_id, attachment_id=att_id) 

@@ -17,6 +17,7 @@ uvicorn
 # Microsoft Graph and Auth
 requests
 msal
+PyJWT[crypto]==2.8.0
 
 # Utilities
 python-dotenv

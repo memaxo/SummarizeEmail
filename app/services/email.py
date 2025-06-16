@@ -95,19 +95,21 @@ async def fetch_email_content(
     user_id = await get_user_id_from_token(request)
     
     try:
+        # Create a repository instance for this specific user
+        email_repo = EmailRepository(user_id=user_id)
         # Get the email using the dynamic user ID
-        email = await email_repository.get_email(user_id, msg_id)
+        email = email_repo.get_message(msg_id)
         
         content = email.get_full_content()
 
         if include_attachments:
             logger.info("Fetching attachments for email", message_id=msg_id)
-            attachments = email_repository.list_attachments(msg_id)
+            attachments = email_repo.list_attachments(msg_id)
             
             for attachment_meta in attachments:
                 logger.info("Parsing attachment", attachment_id=attachment_meta.id)
                 # Fetch the full attachment with its content bytes
-                full_attachment = email_repository.get_attachment(msg_id, attachment_meta.id)
+                full_attachment = email_repo.get_attachment(msg_id, attachment_meta.id)
                 
                 # Parse the content using our service
                 attachment_text = document_parser.parse_content(full_attachment.contentBytes)
