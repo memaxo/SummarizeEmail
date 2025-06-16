@@ -1,12 +1,17 @@
 from typing import List
 
-from fastapi import APIRouter, Path, Query, Request
+from fastapi import APIRouter, Path, Query, Request, HTTPException, Depends
+from redis.asyncio import Redis
+from sqlalchemy.orm import Session
 
 from .. import services
 from ..config import settings
 from ..graph.email_repository import email_repository
 from ..graph.models import Attachment, Email
-from ..models import ErrorResponse, SummarizeResponse
+from ..models import ErrorResponse, SummarizeResponse, SummaryResponse, Summary
+from ..database import get_db, get_redis
+from ..exceptions import EmailNotFoundError, SummarizationError
+from ..logger import logger
 
 router = APIRouter(
     prefix="/messages",
@@ -20,46 +25,89 @@ def get_message(msg_id: str = Path(..., description="The ID of the email to retr
     """
     return email_repository.get_message(msg_id)
 
-@router.get(
-    "/{msg_id}/summary",
-    response_model=SummarizeResponse,
-    responses={
-        400: {"model": ErrorResponse, "description": "Invalid input"},
-        404: {"model": ErrorResponse, "description": "Email not found"},
-        429: {"model": ErrorResponse, "description": "Rate limit exceeded"},
-        500: {"model": ErrorResponse, "description": "Internal server error"},
-        502: {"model": ErrorResponse, "description": "Upstream API error"},
-    },
-    tags=["Summarization"],
-)
-def summarize_email(
+@router.post("/{msg_id}/summary", response_model=SummaryResponse)
+async def summarize_message(
+    msg_id: str,
     request: Request,
-    msg_id: str = Path(
-        ...,
-        description="The immutable ID of the Outlook email message.",
-        examples=["AAMkAGI1ZTMx..."],
-    ),
-    include_attachments: bool = Query(
-        False, 
-        description="Set to true to parse and include the content of attachments in the summary."
-    ),
-):
+    include_attachments: bool = Query(False, description="Include attachment content in summary"),
+    redis: Redis = Depends(get_redis),
+    db: Session = Depends(get_db)
+) -> SummaryResponse:
     """
-    Summarizes a single Outlook email message, with an option to include attachments.
+    Generate a summary for a specific email message.
+    
+    This endpoint:
+    1. Checks Redis cache for existing summary
+    2. If not cached, fetches the email content (optionally including attachments)
+    3. Generates a summary using the configured LLM
+    4. Caches the result in Redis
+    5. Stores the summary in PostgreSQL for analytics
+    
+    The summary is cached with a key format: summary:{msg_id}:{include_attachments}
     """
-    # This endpoint is now a bit redundant with the bulk endpoint,
-    # but we keep it for direct, single-email summarization.
-    # The caching logic is now handled within the main app logic to
-    # avoid duplication.
-    content = services.fetch_email_content(msg_id, include_attachments=include_attachments)
-    summary, from_cache = services.run_summarization_chain(request, content)
-
-    return SummarizeResponse(
-        summary=summary,
-        message_id=msg_id,
-        cached=from_cache,
-        llm_provider=settings.LLM_PROVIDER,
-    )
+    # Generate cache key based on message ID and attachment inclusion
+    cache_key = f"summary:{msg_id}:{include_attachments}"
+    
+    # Check cache first
+    if redis:
+        cached_summary = await redis.get(cache_key)
+        if cached_summary:
+            logger.info("Cache hit for message summary", 
+                       message_id=msg_id, 
+                       include_attachments=include_attachments)
+            return SummaryResponse(
+                message_id=msg_id,
+                summary=cached_summary,
+                cached=True,
+                include_attachments=include_attachments
+            )
+    
+    try:
+        # Fetch email content with optional attachments
+        # Pass the request object to extract user ID from OAuth token
+        content = await services.fetch_email_content(msg_id, request, include_attachments)
+        
+        # Generate summary
+        summary = await services.summarize_email(content)
+        
+        # Cache the summary
+        if redis:
+            await redis.setex(
+                cache_key,
+                settings.CACHE_EXPIRATION_SECONDS,
+                summary
+            )
+            logger.info("Cached message summary", 
+                       message_id=msg_id,
+                       include_attachments=include_attachments)
+        
+        # Store in database for analytics
+        db_summary = Summary(
+            message_id=msg_id,
+            summary=summary,
+            include_attachments=include_attachments
+        )
+        db.add(db_summary)
+        db.commit()
+        
+        return SummaryResponse(
+            message_id=msg_id,
+            summary=summary,
+            cached=False,
+            include_attachments=include_attachments
+        )
+        
+    except EmailNotFoundError:
+        logger.warning("Email not found", message_id=msg_id)
+        raise HTTPException(status_code=404, detail=f"Email {msg_id} not found")
+    except SummarizationError as e:
+        logger.error("Summarization failed", message_id=msg_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to generate summary")
+    except Exception as e:
+        logger.error("Unexpected error during summarization", 
+                    message_id=msg_id, 
+                    error=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/{msg_id}/attachments", response_model=List[Attachment])
 def list_attachments(msg_id: str = Path(..., description="The ID of the email.")):

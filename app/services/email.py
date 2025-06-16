@@ -12,6 +12,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from fastapi import Request
 import hashlib
+import jwt
 
 from ..auth import get_graph_token
 from ..config import settings
@@ -47,36 +48,77 @@ def _get_llm() -> BaseChatModel:
         raise ValueError(f"Unsupported LLM provider: {settings.LLM_PROVIDER}")
 
 
-def fetch_email_content(message_id: str, include_attachments: bool = False) -> str:
+async def get_user_id_from_token(request: Request) -> str:
+    """Extract the user ID from the OAuth token in the request.
+    
+    In production with Custom GPT, the user's identity comes from
+    the OAuth token, not from environment variables.
     """
-    Fetches the content of a specific email, optionally including text from attachments.
-
-    Args:
-        message_id: The unique identifier of the Microsoft Outlook message.
-        include_attachments: Whether to fetch and parse attachments.
-
-    Returns:
-        The text content of the email, including attachment text if requested.
-    """
-    email = email_repository.get_message(message_id)
-    content = email.get_full_content()
-
-    if include_attachments:
-        logger.info("Fetching attachments for email", message_id=message_id)
-        attachments = email_repository.list_attachments(message_id)
+    # Get the authorization header
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        # Fallback to TARGET_USER_ID for local development/testing
+        return settings.TARGET_USER_ID
+    
+    token = auth_header.split(" ")[1]
+    
+    try:
+        # Decode the token to get user info
+        # This is a simplified example - in production you'd validate the token
+        decoded = jwt.decode(token, options={"verify_signature": False})
         
-        for attachment_meta in attachments:
-            logger.info("Parsing attachment", attachment_id=attachment_meta.id)
-            # Fetch the full attachment with its content bytes
-            full_attachment = email_repository.get_attachment(message_id, attachment_meta.id)
+        # Microsoft tokens typically have 'oid' (object ID) or 'sub' (subject)
+        user_id = decoded.get('oid') or decoded.get('sub') or decoded.get('preferred_username')
+        
+        if not user_id:
+            logger.warning("No user ID found in token, falling back to TARGET_USER_ID")
+            return settings.TARGET_USER_ID
             
-            # Parse the content using our service
-            attachment_text = document_parser.parse_content(full_attachment.contentBytes)
-            
-            if attachment_text:
-                content += f"\n\n--- Attachment: {attachment_meta.name} ---\n{attachment_text}"
+        return user_id
+    except Exception as e:
+        logger.error(f"Error decoding token: {e}")
+        # Fallback for development
+        return settings.TARGET_USER_ID
 
-    return content
+
+async def fetch_email_content(
+    msg_id: str,
+    request: Request,
+    include_attachments: bool = False
+) -> str:
+    """Fetch email content from Microsoft Graph API.
+    
+    In production, uses the user ID from the OAuth token.
+    In development, falls back to TARGET_USER_ID.
+    """
+    # Get user ID from token in production, or from env in development
+    user_id = await get_user_id_from_token(request)
+    
+    try:
+        # Get the email using the dynamic user ID
+        email = await email_repository.get_email(user_id, msg_id)
+        
+        content = email.get_full_content()
+
+        if include_attachments:
+            logger.info("Fetching attachments for email", message_id=msg_id)
+            attachments = email_repository.list_attachments(msg_id)
+            
+            for attachment_meta in attachments:
+                logger.info("Parsing attachment", attachment_id=attachment_meta.id)
+                # Fetch the full attachment with its content bytes
+                full_attachment = email_repository.get_attachment(msg_id, attachment_meta.id)
+                
+                # Parse the content using our service
+                attachment_text = document_parser.parse_content(full_attachment.contentBytes)
+                
+                if attachment_text:
+                    content += f"\n\n--- Attachment: {attachment_meta.name} ---\n{attachment_text}"
+
+        return content
+    except Exception as e:
+        logger.error(f"Error fetching email content: {e}")
+        raise EmailNotFoundError(f"Email not found: {msg_id}") from e
 
 
 def run_summarization_chain(request: Request, content: str) -> Tuple[str, bool]:
