@@ -18,7 +18,7 @@ class GraphApiError(ServiceError):
         super().__init__(f"Microsoft Graph API error: {message}", status_code=502) # Bad Gateway
 
 
-classSummarizationError(ServiceError):
+class SummarizationError(ServiceError):
     """Raised when the LLM fails to generate a summary."""
     def __init__(self, message: str):
         super().__init__(f"Summarization failed: {message}", status_code=500) 

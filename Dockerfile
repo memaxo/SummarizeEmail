@@ -10,9 +10,11 @@ ENV PYTHONDONTWRITEBYTECODE 1
 # Ensure that Python output is sent straight to the terminal without buffering
 ENV PYTHONUNBUFFERED 1
 
-# Install system dependencies that might be needed by some python packages
-# In this case, we have no special dependencies, but this is good practice
-# RUN apt-get update && apt-get install -y some-package && rm -rf /var/lib/apt/lists/*
+# Install minimal system dependencies (curl is required for the container
+# healthcheck defined in docker-compose.yml)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install pipenv for dependency management
 RUN pip install --upgrade pip

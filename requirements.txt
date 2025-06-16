@@ -1,23 +1,28 @@
 # Core web framework
-fastapi==0.111.0
-uvicorn[standard]==0.29.0
+fastapi==0.115.12
+uvicorn[standard]==0.30.1
+pydantic>2
 
 # Configuration management
-pydantic-settings==2.2.1
+pydantic-settings==2.4.0
 python-dotenv==1.0.1
 
 # Microsoft Graph API authentication
-msal==1.28.0
-requests==2.31.0
+msal==1.29.0
+requests==2.32.3
 
 # LangChain for summarization
-langchain==0.2.1
-langchain-openai==0.1.7
-langchain-community==0.2.1
-langchain-text-splitters==0.2.0
+langchain==0.2.5
+langchain-openai==0.1.8
+langchain-community==0.2.5
+langchain-text-splitters==0.2.1
 
 # Caching
-redis==5.0.4
+redis==5.0.7
 
 # API Rate Limiting
-slowapi==0.1.9 
+slowapi==0.1.9
+
+# Observability
+prometheus-fastapi-instrumentator==6.1.0
+structlog==24.1.0 

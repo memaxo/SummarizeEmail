@@ -1,9 +1,13 @@
 import json
 import logging
+from contextlib import asynccontextmanager
 
 import redis
+import structlog
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from prometheus_fastapi_instrumentator import Instrumentator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 
@@ -12,31 +16,31 @@ from .config import settings
 from .exceptions import ServiceError
 from .models import ErrorResponse, SummarizeResponse
 
-# Initialize logging
-logger = logging.getLogger(__name__)
+# Configure structured logging for the application
+structlog.configure(
+    processors=[
+        structlog.contextvars.merge_contextvars,
+        structlog.processors.add_log_level,
+        structlog.processors.StackInfoRenderer(),
+        structlog.dev.set_exc_info,
+        structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S", utc=False),
+        structlog.dev.ConsoleRenderer(),
+    ]
+)
+logger = structlog.get_logger(__name__)
 
 # Initialize the rate limiter
 limiter = Limiter(
     key_func=get_remote_address,
-    default_limits=[f"{settings.RATE_LIMIT_REQUESTS} per {settings.RATE_LIMIT_TIMESCALE}"]
+    default_limits=[f"{settings.RATE_LIMIT_REQUESTS} per {settings.RATE_LIMIT_TIMESCALE}"],
 )
 
-# Initialize FastAPI app
-app = FastAPI(
-    title="Outlook Email Summarizer API",
-    description="An API to summarize Outlook emails using LangChain and a custom GPT.",
-    version="1.0.0",
-)
-
-# Apply the rate limiter to the app
-app.state.limiter = limiter
-app.add_exception_handler(HTTPException, _rate_limit_exceeded_handler)
-
-
-@app.on_event("startup")
-def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     """
-    On startup, connect to Redis and log the current LLM provider.
+    Manages application lifecycle events for startup and shutdown.
+    - Connects to Redis on startup.
+    - Closes Redis connection on shutdown.
     """
     logger.info("FastAPI application startup...")
     logger.info(f"Using LLM provider: {settings.LLM_PROVIDER}")
@@ -45,19 +49,39 @@ def startup_event():
         app.state.redis.ping()
         logger.info("Successfully connected to Redis.")
     except redis.exceptions.ConnectionError as e:
-        logger.error(f"Could not connect to Redis: {e}")
+        logger.error("Could not connect to Redis during startup.", exc_info=e)
         app.state.redis = None
-
-
-@app.on_event("shutdown")
-def shutdown_event():
-    """
-    On shutdown, close the Redis connection.
-    """
+    
+    yield
+    
     if app.state.redis:
         app.state.redis.close()
         logger.info("Redis connection closed.")
     logger.info("FastAPI application shutdown.")
+
+# Initialize FastAPI app
+app = FastAPI(
+    title="Outlook Email Summarizer API",
+    description="An API to summarize Outlook emails using LangChain and a custom GPT.",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+# Instrument the app with Prometheus metrics, exposing /metrics
+Instrumentator().instrument(app).expose(app)
+
+# Apply the rate limiter to the app
+app.state.limiter = limiter
+app.add_exception_handler(HTTPException, _rate_limit_exceeded_handler)
+
+# Add CORS middleware to allow cross-origin requests
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Be more specific in production
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
 
 
 @app.exception_handler(ServiceError)
@@ -66,7 +90,7 @@ async def service_error_handler(request: Request, exc: ServiceError):
     Global exception handler for custom ServiceError exceptions.
     Ensures that service-layer errors are converted into clean JSON responses.
     """
-    logger.error(f"Service error occurred: {exc.message}")
+    logger.error("Service error occurred", message=exc.message, status_code=exc.status_code)
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.message},
@@ -80,7 +104,10 @@ def health_check():
     and can connect to essential services like Redis.
     """
     redis_status = "ok"
-    if not app.state.redis or not app.state.redis.ping():
+    try:
+        if not app.state.redis or not app.state.redis.ping():
+            redis_status = "error"
+    except redis.exceptions.ConnectionError:
         redis_status = "error"
 
     return {
@@ -124,10 +151,15 @@ def summarize_email(
     5.  Returns the summary.
     """
     # 1. Check Redis cache first
+    cached_result = None
     if app.state.redis:
-        cached_result = app.state.redis.get(msg_id)
+        try:
+            cached_result = app.state.redis.get(msg_id)
+        except redis.exceptions.ConnectionError as e:
+            logger.error("Could not connect to Redis for cache check", exc_info=e)
+            
         if cached_result:
-            logger.info(f"Cache hit for message_id: {msg_id}")
+            logger.info("Cache hit for message_id", msg_id=msg_id)
             data = json.loads(cached_result)
             return SummarizeResponse(
                 summary=data["summary"],
@@ -135,7 +167,8 @@ def summarize_email(
                 cached=True,
                 llm_provider=data.get("llm_provider", settings.LLM_PROVIDER),
             )
-    logger.info(f"Cache miss for message_id: {msg_id}")
+            
+    logger.info("Cache miss for message_id", msg_id=msg_id)
 
     # 2. Fetch email content from Graph API
     content = services.fetch_email_content(msg_id)
@@ -152,8 +185,11 @@ def summarize_email(
 
     # 4. Cache the new summary in Redis
     if app.state.redis:
-        logger.info(f"Setting cache for message_id: {msg_id}")
-        app.state.redis.set(msg_id, json.dumps(response_data), ex=settings.REDIS_CACHE_TTL)
+        try:
+            logger.info("Setting cache for message_id", msg_id=msg_id)
+            app.state.redis.set(msg_id, json.dumps(response_data), ex=settings.REDIS_CACHE_TTL)
+        except redis.exceptions.ConnectionError as e:
+            logger.error("Could not connect to Redis to set cache", exc_info=e)
 
     # 5. Return the response
     return SummarizeResponse(**response_data) 

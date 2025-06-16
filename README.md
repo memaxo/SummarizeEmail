@@ -113,27 +113,66 @@ With Docker installed, starting the service is a single command:
 docker-compose up --build
 ```
 
-The API will be available at `http://localhost:8000`. You can see the auto-generated documentation at `http://localhost:8000/docs`.
+The API will be available at `http://localhost:8000`.
+- **API Docs**: `http://localhost:8000/docs`
+- **Health Check**: `http://localhost:8000/health`
+- **Metrics**: `http://localhost:8000/metrics`
 
-### Step 4: Deploy and Get a Public URL
+### Step 4: Deploy to a Single EC2 Host
 
-To use this with a Custom GPT, the API must be accessible from the internet.
-1.  **Deployment**: Deploy this container to a service like Azure Container Apps, Google Cloud Run, or any server that can run Docker containers.
-2.  **Public URL**: Ensure you have a public HTTPS URL pointing to your service. For example: `https://your-summarizer-api.azurewebsites.net`.
-3.  **Local Tunneling (for testing)**: For quick testing without deploying, you can use a tool like `ngrok` to expose your local server:
+To get the prototype running on a public server, you can deploy it to an EC2 instance.
+
+1.  **Launch an EC2 Instance**:
+    *   **AMI**: Use Amazon Linux 2023 or Ubuntu 22.04 LTS.
+    *   **Instance Type**: `t3.small` is sufficient for the prototype.
+    *   **Security Group (Firewall)**: Create a new security group and add **inbound rules** to allow traffic on:
+        *   **Port 22 (SSH)** from your IP address for management.
+        *   **Port 8000 (HTTP)** from `0.0.0.0/0` (or your IP) to access the FastAPI app.
+
+2.  **SSH into the Instance and Install Dependencies**:
     ```bash
-    ngrok http 8000
+    # SSH into your new instance
+    ssh -i /path/to/your-key.pem ec2-user@<your-ec2-public-dns>
+
+    # Install Git, Docker, and Docker Compose
+    sudo yum update -y
+    sudo yum install git docker -y
+    sudo service docker start
+    sudo usermod -aG docker ec2-user # Log out and back in to apply group changes
+    
+    # Install Docker Compose v2
+    DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
+    mkdir -p $DOCKER_CONFIG/cli-plugins
+    curl -SL https://github.com/docker/compose/releases/download/v2.27.0/docker-compose-linux-x86_64 -o $DOCKER_CONFIG/cli-plugins/docker-compose
+    chmod +x $DOCKER_CONFIG/cli-plugins/docker-compose
     ```
-    Ngrok will give you a public HTTPS URL.
+
+3.  **Clone and Run the Application**:
+    ```bash
+    # Clone your repository
+    git clone https://github.com/<your-username>/SummarizeEmail.git
+    cd SummarizeEmail
+
+    # Create and populate the .env file with your credentials
+    cp .env.example .env
+    nano .env # Or your preferred editor
+
+    # Run the application in detached mode
+    docker compose up -d --build
+    ```
+
+4.  **Access Your Service**:
+    *   Your API is now available at `http://<your-ec2-public-dns>:8000`.
+    *   Test the health check: `curl http://<your-ec2-public-dns>:8000/health`
 
 ### Step 5: Set Up the Custom GPT Action
 
 1.  **Update the OpenAPI Spec**:
     *   Open `openapi.yaml`.
-    *   Change the `url` under `servers` to your public API endpoint.
+    *   Change the `url` under `servers` to your public EC2 endpoint.
     ```yaml
     servers:
-      - url: https://your-public-api-endpoint.com # <-- CHANGE THIS
+      - url: http://<your-ec2-public-dns>:8000
     ```
 
 2.  **Create the Custom GPT**:
@@ -169,4 +208,8 @@ Summarizes an email.
 
 A health check endpoint to monitor the service status and its dependency on Redis.
 
--   **Success Response (200)**: A JSON object indicating the status of the API and its connection to Redis. 
+-   **Success Response (200)**: A JSON object indicating the status of the API and its connection to Redis.
+
+### `GET /metrics`
+
+An endpoint that exposes Prometheus-compatible metrics for monitoring application performance, request latency, and status codes. 

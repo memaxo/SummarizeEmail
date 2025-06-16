@@ -1,6 +1,7 @@
 import logging
 import os
 from functools import lru_cache
+from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -20,7 +21,7 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = "openai"
 
     # OpenAI Configuration
-    OPENAI_API_KEY: str | None = None
+    OPENAI_API_KEY: Optional[str] = None
     OPENAI_MODEL_NAME: str = "gpt-4o-mini"
 
     # Ollama Configuration
