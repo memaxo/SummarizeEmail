@@ -1,4 +1,5 @@
 import logging
+from typing import List
 
 import requests
 from langchain_community.chat_models import ChatOllama
@@ -11,6 +12,8 @@ from langchain.chains.summarize import load_summarize_chain
 from .auth import get_graph_token
 from .config import settings
 from .exceptions import EmailNotFoundError, GraphApiError, SummarizationError
+from .graph.email_repository import email_repository
+from .graph.models import Email
 
 logger = logging.getLogger(__name__)
 
@@ -41,48 +44,16 @@ def _get_llm() -> BaseChatModel:
 
 def fetch_email_content(message_id: str) -> str:
     """
-    Fetches the body content of a specific email message from Microsoft Graph.
+    Fetches the body content of a specific email message using the repository.
 
     Args:
         message_id: The unique identifier of the Microsoft Outlook message.
 
     Returns:
         The text content of the email body.
-
-    Raises:
-        EmailNotFoundError: If the email with the given ID cannot be found.
-        GraphApiError: For other errors during the API call.
     """
-    try:
-        token = get_graph_token()
-    except GraphApiError as e:
-        # Re-raise to be handled by the main endpoint
-        raise e
-
-    graph_url = f"https://graph.microsoft.com/v1.0/users/{settings.TARGET_USER_ID}/messages/{message_id}"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        # Request body content as plain text to avoid HTML parsing boilerplate
-        "Prefer": 'outlook.body-content-type="text"',
-    }
-    # We only need the 'body' and 'subject' for the summary
-    params = {"$select": "body,subject"}
-
-    logger.info(f"Fetching email with message_id: {message_id}")
-    response = requests.get(graph_url, headers=headers, params=params)
-
-    if response.status_code == 404:
-        raise EmailNotFoundError(message_id)
-    if not response.ok:
-        raise GraphApiError(
-            f"Failed to fetch email. Status: {response.status_code}, Response: {response.text}"
-        )
-
-    data = response.json()
-    # Combine subject and body for a more complete summary context
-    subject = data.get("subject", "No Subject")
-    content = data.get("body", {}).get("content", "")
-    return f"Subject: {subject}\n\n{content}"
+    email = email_repository.get_message(message_id)
+    return email.get_full_content()
 
 
 def run_summarization_chain(content: str) -> str:
@@ -117,5 +88,27 @@ def run_summarization_chain(content: str) -> str:
         logger.info("Successfully generated summary.")
         return summary
     except Exception as e:
-        logger.error(f"An error occurred during summarization: {e}")
-        raise SummarizationError(str(e)) 
+        logger.error("An error occurred during summarization: %s", e, exc_info=True)
+        raise SummarizationError(str(e)) from e
+
+
+def run_bulk_summarization(emails: List[Email]) -> str:
+    """
+    Creates a single digest summary from a list of emails.
+
+    Args:
+        emails: A list of Email objects to be summarized.
+
+    Returns:
+        A single string containing the digest summary.
+    """
+    if not emails:
+        return "No emails to summarize."
+
+    # Combine the content of all emails into a single document,
+    # separated by a clear delimiter for the LLM to process.
+    full_content = "\n\n---\n\n".join([email.get_full_content() for email in emails])
+    
+    logger.info(f"Running bulk summarization for {len(emails)} emails.")
+    # We can reuse the existing summarization chain for the combined content.
+    return run_summarization_chain(full_content) 

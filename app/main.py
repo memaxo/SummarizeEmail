@@ -15,6 +15,7 @@ from . import services
 from .config import settings
 from .exceptions import ServiceError
 from .models import ErrorResponse, SummarizeResponse
+from .routes import emails, messages, summaries
 
 # Configure structured logging for the application
 structlog.configure(
@@ -67,6 +68,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Include the API routers
+app.include_router(emails.router)
+app.include_router(messages.router)
+app.include_router(summaries.router)
+
 # Instrument the app with Prometheus metrics, exposing /metrics
 Instrumentator().instrument(app).expose(app)
 
@@ -116,80 +122,4 @@ def health_check():
             "redis": redis_status,
             "llm_provider": settings.LLM_PROVIDER
         }
-    }
-
-
-@app.get(
-    "/summarize",
-    response_model=SummarizeResponse,
-    responses={
-        400: {"model": ErrorResponse, "description": "Invalid input"},
-        404: {"model": ErrorResponse, "description": "Email not found"},
-        429: {"model": ErrorResponse, "description": "Rate limit exceeded"},
-        500: {"model": ErrorResponse, "description": "Internal server error"},
-        502: {"model": ErrorResponse, "description": "Upstream API error"},
-    },
-    tags=["Summarization"],
-)
-@limiter.limit(f"{settings.RATE_LIMIT_REQUESTS} per {settings.RATE_LIMIT_TIMESCALE}")
-def summarize_email(
-    request: Request,
-    msg_id: str = Query(
-        ...,
-        description="The immutable ID of the Outlook email message.",
-        examples=["AAMkAGI1ZTMx..."],
-    ),
-):
-    """
-    Summarizes a single Outlook email message.
-
-    This endpoint orchestrates the process:
-    1.  Checks for a cached summary in Redis.
-    2.  If not cached, fetches the email from Microsoft Graph.
-    3.  Generates a summary using the configured LLM.
-    4.  Caches the new summary in Redis.
-    5.  Returns the summary.
-    """
-    # 1. Check Redis cache first
-    cached_result = None
-    if app.state.redis:
-        try:
-            cached_result = app.state.redis.get(msg_id)
-        except redis.exceptions.ConnectionError as e:
-            logger.error("Could not connect to Redis for cache check", exc_info=e)
-            
-        if cached_result:
-            logger.info("Cache hit for message_id", msg_id=msg_id)
-            data = json.loads(cached_result)
-            return SummarizeResponse(
-                summary=data["summary"],
-                message_id=msg_id,
-                cached=True,
-                llm_provider=data.get("llm_provider", settings.LLM_PROVIDER),
-            )
-            
-    logger.info("Cache miss for message_id", msg_id=msg_id)
-
-    # 2. Fetch email content from Graph API
-    content = services.fetch_email_content(msg_id)
-
-    # 3. Generate the summary
-    summary = services.run_summarization_chain(content)
-
-    response_data = {
-        "summary": summary,
-        "message_id": msg_id,
-        "cached": False,
-        "llm_provider": settings.LLM_PROVIDER,
-    }
-
-    # 4. Cache the new summary in Redis
-    if app.state.redis:
-        try:
-            logger.info("Setting cache for message_id", msg_id=msg_id)
-            app.state.redis.set(msg_id, json.dumps(response_data), ex=settings.REDIS_CACHE_TTL)
-        except redis.exceptions.ConnectionError as e:
-            logger.error("Could not connect to Redis to set cache", exc_info=e)
-
-    # 5. Return the response
-    return SummarizeResponse(**response_data) 
+    } 

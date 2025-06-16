@@ -1,3 +1,5 @@
+from typing import List, Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -15,4 +17,19 @@ class ErrorResponse(BaseModel):
     """
     Defines the structure for error responses.
     """
-    detail: str = Field(..., description="A clear, human-readable error message.") 
+    detail: str = Field(..., description="A clear, human-readable error message.")
+
+
+class SummarizeBulkRequest(BaseModel):
+    """
+    Defines the request for the bulk summarization endpoint.
+    """
+    message_ids: List[str] = Field(..., description="A list of email message IDs to summarize.", min_items=1)
+
+
+class SummarizeDigestResponse(BaseModel):
+    """
+    Defines the successful response for a digest summary.
+    """
+    digest: str = Field(..., description="The generated digest summary from multiple emails.")
+    llm_provider: str = Field(..., description="The LLM provider used for the summary.") 

@@ -13,66 +13,30 @@ servers:
   - url: http://ec2-52-43-205-252.us-west-2.compute.amazonaws.com:8000
     description: Production Server
 paths:
-  /summarize:
+  /messages/{msg_id}/summary:
     get:
-      summary: Summarize an Email
+      summary: Summarize a Single Email
       description: >-
-        Fetches an email by its Microsoft Graph message ID, generates a
+        Fetches a single email by its Microsoft Graph message ID, generates a
         summary, and returns it.
-      operationId: summarizeEmail
+      operationId: summarizeSingleEmail
       parameters:
         - name: msg_id
-          in: query
+          in: path
           required: true
           description: The unique and immutable ID of the email message from Microsoft Graph API.
           schema:
             type: string
-          example: AAMkAGI1ZTMxZDMtMmVkMy00NDk2LWJjM2EtYmEzZDEyMmRlMjU1BGAAAAAADo_9ADdDR4RIi_y4aYq1uBwC_2SYa0AABkAAAAAAEMAAC_2SYa0AAAkAAAAACiAAA=
+          example: AAMkAGI1ZTMx...
       responses:
         '200':
           description: Successfully retrieved and generated the email summary.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  summary:
-                    type: string
-                    description: The generated summary of the email.
-                  message_id:
-                    type: string
-                    description: The ID of the email that was summarized.
-                  cached:
-                    type: boolean
-                    description: Whether the result was served from the cache.
-                  llm_provider:
-                    type: string
-                    description: The LLM provider used for summarization.
-              example:
-                summary: "The project kickoff meeting is confirmed for next Tuesday at 10 AM. Key stakeholders are expected to attend to discuss the project timeline and initial deliverables. Please review the attached pre-read document."
-                message_id: "AAMkAGI1ZTMx..."
-                cached: false
-                llm_provider: "openai"
-        '400':
-          description: Bad Request - The 'msg_id' parameter was missing or invalid.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/SummarizeResponse'
         '404':
           description: Not Found - No email message could be found for the provided 'msg_id'.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '429':
-          description: Too Many Requests - The client has exceeded the rate limit.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '500':
-          description: Internal Server Error - An unexpected error occurred on the server.
           content:
             application/json:
               schema:
@@ -83,9 +47,64 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /summaries/:
+    post:
+      summary: Summarize Multiple Emails
+      description: Creates a single digest summary from a list of provided email message IDs.
+      operationId: summarizeBulk
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SummarizeBulkRequest'
+      responses:
+        '200':
+          description: Successfully generated the digest summary.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SummarizeDigestResponse'
+  /summaries/daily:
+    get:
+      summary: Get Daily Summary Digest
+      description: Generates a digest summary of all emails received in the last 24 hours.
+      operationId: summarizeDaily
+      responses:
+        '200':
+          description: Successfully generated the daily digest.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SummarizeDigestResponse'
 
 components:
   schemas:
+    SummarizeResponse:
+      type: object
+      properties:
+        summary:
+          type: string
+        message_id:
+          type: string
+        cached:
+          type: boolean
+        llm_provider:
+          type: string
+    SummarizeBulkRequest:
+      type: object
+      properties:
+        message_ids:
+          type: array
+          items:
+            type: string
+    SummarizeDigestResponse:
+      type: object
+      properties:
+        digest:
+          type: string
+        llm_provider:
+          type: string
     Error:
       type: object
       properties:
