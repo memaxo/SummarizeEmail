@@ -1,16 +1,12 @@
 import pytest
 from fastapi.testclient import TestClient
 from datetime import datetime, timedelta
+import fakeredis
+from fastapi import Request
+from unittest.mock import MagicMock
 
 from app.main import app
 from app.graph.models import Email, EmailBody
-
-@pytest.fixture
-def client(mocker):
-    """Pytest fixture to create a FastAPI TestClient."""
-    mocker.patch("app.main.init_db", return_value=None)
-    with TestClient(app) as c:
-        yield c
 
 def test_summarize_bulk(client, mocker):
     """
@@ -22,15 +18,15 @@ def test_summarize_bulk(client, mocker):
 
     mocker.patch(
         "app.routes.summaries.email_repository.get_message",
-        return_value=Email(id="id", subject="s", body=EmailBody(content="c", contentType="t"), from_address={"emailAddress":{}}, toRecipients=[], sentDateTime="-")
+        return_value=Email(id="id", subject="s", body=EmailBody(content="c", contentType="t"), from_address={"emailAddress":{"address":"test@test.com"}}, toRecipients=[], sentDateTime="-")
     )
     mocker.patch(
         "app.routes.summaries.services.run_bulk_summarization",
-        return_value=expected_digest
+        return_value=(expected_digest, False)
     )
 
     # 2. Call the API
-    response = client.post("/summaries/", json={"message_ids": message_ids})
+    response = client.post("/summaries", json={"message_ids": message_ids})
 
     # 3. Assert the response
     assert response.status_code == 200
@@ -47,11 +43,11 @@ def test_summarize_daily_digest(client, mocker):
     
     mocker.patch(
         "app.routes.summaries.email_repository.list_messages",
-        return_value=[Email(id="id", subject="s", body=EmailBody(content="c", contentType="t"), from_address={"emailAddress":{}}, toRecipients=[], sentDateTime="-")]
+        return_value=[Email(id="id", subject="s", body=EmailBody(content="c", contentType="t"), from_address={"emailAddress":{"address":"test@test.com"}}, toRecipients=[], sentDateTime="-")]
     )
     mocker.patch(
         "app.routes.summaries.services.run_bulk_summarization",
-        return_value=expected_digest
+        return_value=(expected_digest, False)
     )
     
     # 2. Call the API
@@ -70,6 +66,10 @@ def test_summarize_daily_digest_no_emails(client, mocker):
     mocker.patch(
         "app.routes.summaries.email_repository.list_messages",
         return_value=[]
+    )
+    mocker.patch(
+        "app.routes.summaries.services.run_bulk_summarization",
+        return_value=("No emails to summarize.", False)
     )
     
     # 2. Call the API

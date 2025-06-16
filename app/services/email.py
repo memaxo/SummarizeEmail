@@ -1,5 +1,5 @@
-import logging
-from typing import List
+import structlog
+from typing import List, Tuple
 
 import requests
 from langchain_community.chat_models import ChatOllama
@@ -8,15 +8,19 @@ from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain.chains.summarize import load_summarize_chain
+from langchain_core.prompts import ChatPromptTemplate
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from fastapi import Request
+import hashlib
 
 from ..auth import get_graph_token
 from ..config import settings
-from ..exceptions import EmailNotFoundError, GraphApiError, SummarizationError
+from ..exceptions import EmailNotFoundError, GraphApiError, SummarizationError, RAGError
 from ..graph.email_repository import email_repository
 from ..graph.models import Email
 from .document_parser import document_parser
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def _get_llm() -> BaseChatModel:
@@ -75,59 +79,100 @@ def fetch_email_content(message_id: str, include_attachments: bool = False) -> s
     return content
 
 
-def run_summarization_chain(content: str) -> str:
+def run_summarization_chain(request: Request, content: str) -> Tuple[str, bool]:
     """
     Summarizes the given text using a LangChain map-reduce summarization chain.
-
-    This method is ideal for long documents that don't fit into the model's
-    context window. It summarizes chunks of the text independently (`map` step)
-    and then combines those summaries into a final summary (`reduce` step).
-
-    Args:
-        content: The text content to summarize.
-
-    Returns:
-        The generated summary.
+    It checks for a cached summary in Redis before calling the LLM.
+    Returns the summary and a boolean indicating if it was from the cache.
     """
-    llm = _get_llm()
-    # Create a single LangChain Document from the raw email content
-    docs = [Document(page_content=content)]
+    # 1. Check for cached result
+    redis_client = request.app.state.redis
+    cache_key = f"summary:{hashlib.sha256(content.encode()).hexdigest()}"
+    if redis_client:
+        cached_summary = redis_client.get(cache_key)
+        if cached_summary:
+            logger.info("Returning cached summary", cache_key=cache_key)
+            return cached_summary, True
 
-    # Split the document into smaller chunks for the map-reduce strategy
+    # 2. If not cached, run the full summarization
+    llm = _get_llm()
+    docs = [Document(page_content=content)]
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=4000, chunk_overlap=200)
     split_docs = text_splitter.split_documents(docs)
-
-    # Use LangChain's built-in summarization chain.
-    # The `map_reduce` type is robust for documents of any length.
     chain = load_summarize_chain(llm, chain_type="map_reduce")
 
     logger.info(f"Running summarization chain with {len(split_docs)} documents...")
     try:
         summary = chain.run(split_docs)
         logger.info("Successfully generated summary.")
-        return summary
+        
+        # 3. Store the new result in the cache
+        if redis_client:
+            redis_client.set(cache_key, summary, ex=settings.CACHE_EXPIRATION_SECONDS)
+            logger.info("Stored new summary in cache", cache_key=cache_key)
+
+        return summary, False
     except Exception as e:
         logger.error("An error occurred during summarization: %s", e, exc_info=True)
         raise SummarizationError(str(e)) from e
 
 
-def run_bulk_summarization(emails: List[Email]) -> str:
+def run_rag_chain(question: str, context_docs: List[Document]) -> str:
     """
-    Creates a single digest summary from a list of emails.
+    Generates an answer to a question based on a list of context documents.
 
     Args:
-        emails: A list of Email objects to be summarized.
+        question: The user's question.
+        context_docs: A list of LangChain documents retrieved from the vector store.
 
     Returns:
-        A single string containing the digest summary.
+        A generated answer string.
+    """
+    llm = _get_llm()
+    
+    # This prompt instructs the LLM to answer the user's question *only* based
+    # on the provided context documents. This is a crucial part of RAG.
+    template = """
+    You are an assistant for question-answering tasks. 
+    Use the following pieces of retrieved context to answer the question. 
+    If you don't know the answer, just say that you don't know. 
+    Use three sentences maximum and keep the answer concise.
+
+    Question: {question} 
+
+    Context: {context} 
+
+    Answer:
+    """
+    prompt = ChatPromptTemplate.from_template(template)
+
+    # This chain "stuffs" all the documents into the {context} part of the prompt
+    # and sends it to the LLM.
+    question_answer_chain = create_stuff_documents_chain(llm, prompt)
+
+    logger.info("Running RAG chain", question=question, num_docs=len(context_docs))
+    try:
+        response = question_answer_chain.invoke({
+            "question": question,
+            "context": context_docs
+        })
+        logger.info("Successfully generated RAG answer.")
+        return response
+    except Exception as e:
+        logger.error("An error occurred during RAG chain execution", exc_info=True)
+        raise RAGError(str(e)) from e
+
+
+def run_bulk_summarization(request: Request, emails: List[Email]) -> Tuple[str, bool]:
+    """
+    Creates a single digest summary from a list of emails.
     """
     if not emails:
-        return "No emails to summarize."
+        return "No emails to summarize.", False
 
-    # Combine the content of all emails into a single document,
-    # separated by a clear delimiter for the LLM to process.
+    # Combine the content of all emails into a single document
     full_content = "\n\n---\n\n".join([email.get_full_content() for email in emails])
     
     logger.info(f"Running bulk summarization for {len(emails)} emails.")
     # We can reuse the existing summarization chain for the combined content.
-    return run_summarization_chain(full_content) 
+    return run_summarization_chain(request, full_content) 

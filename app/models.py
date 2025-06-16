@@ -46,4 +46,12 @@ class RAGQueryResponse(BaseModel):
     sent_date_time: datetime
 
     class Config:
-        from_attributes = True 
+        from_attributes = True
+
+
+class RAGAnswerResponse(BaseModel):
+    """
+    Defines the response for a RAG query that includes a synthesized answer.
+    """
+    answer: str = Field(..., description="The generated answer from the RAG chain.")
+    source_documents: List[RAGQueryResponse] = Field(..., description="The source documents used to generate the answer.") 

@@ -52,12 +52,12 @@ def summarize_email(
     # The caching logic is now handled within the main app logic to
     # avoid duplication.
     content = services.fetch_email_content(msg_id, include_attachments=include_attachments)
-    summary = services.run_summarization_chain(content)
+    summary, from_cache = services.run_summarization_chain(request, content)
 
     return SummarizeResponse(
         summary=summary,
         message_id=msg_id,
-        cached=False,  # Caching logic is now centralized
+        cached=from_cache,
         llm_provider=settings.LLM_PROVIDER,
     )
 

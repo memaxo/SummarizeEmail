@@ -1,16 +1,10 @@
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import call
+from unittest.mock import call, MagicMock
+import fakeredis
 
 from app.main import app
 from app.graph.models import Email, EmailBody
-
-@pytest.fixture
-def client(mocker):
-    """Pytest fixture to create a FastAPI TestClient."""
-    mocker.patch("app.main.init_db", return_value=None)
-    with TestClient(app) as c:
-        yield c
 
 def test_search_emails_no_filters(client, mocker):
     """

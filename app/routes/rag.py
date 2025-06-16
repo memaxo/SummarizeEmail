@@ -6,10 +6,11 @@ import structlog
 from ..db.session import get_db
 from ..graph.email_repository import email_repository
 from ..rag.vector_db_repository import VectorDBRepository
-from ..models import ErrorResponse, RAGQueryResponse
+from ..models import ErrorResponse, RAGQueryResponse, RAGAnswerResponse
 from ..rag.models import EmailEmbedding as RAGEmail
-from ..services import fetch_email_content
-from ..graph.models import EmailBody
+from ..services import fetch_email_content, run_rag_chain
+from ..graph.models import EmailBody, Email
+from langchain_core.documents import Document
 
 logger = structlog.get_logger(__name__)
 
@@ -55,11 +56,28 @@ def ingest_emails(query: str, background_tasks: BackgroundTasks, db: Session = D
     return {"message": "Email ingestion started in the background."}
 
 
-@router.get("/query", response_model=List[RAGQueryResponse])
+@router.get("/query", response_model=RAGAnswerResponse)
 def query_emails(q: str, db: Session = Depends(get_db)):
     """
-    Performs a semantic search over the ingested emails.
+    Performs a semantic search and generates an answer based on the results.
     """
+    # 1. Retrieve relevant documents from the vector database
     repo = VectorDBRepository(db)
-    results = repo.query(q)
-    return results 
+    retrieved_emails = repo.query(q)
+    
+    # 2. Convert the SQLAlchemy models to LangChain Documents for the chain
+    context_docs = [
+        Document(
+            page_content=email.content,
+            metadata={"id": email.id, "subject": email.subject, "sent_date_time": email.sent_date_time}
+        ) for email in retrieved_emails
+    ]
+
+    # 3. Generate an answer using the RAG chain
+    answer = run_rag_chain(question=q, context_docs=context_docs)
+
+    # 4. Format the response
+    return RAGAnswerResponse(
+        answer=answer,
+        source_documents=retrieved_emails
+    ) 

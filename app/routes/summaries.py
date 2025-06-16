@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from typing import List
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Request
 
 from .. import services
 from ..config import settings
@@ -20,7 +20,7 @@ def summarize_bulk(request: SummarizeBulkRequest):
     """
     emails = [email_repository.get_message(msg_id) for msg_id in request.message_ids]
     
-    digest = services.run_bulk_summarization(emails)
+    digest, _ = services.run_bulk_summarization(request, emails)
     
     return SummarizeDigestResponse(
         digest=digest,
@@ -28,7 +28,7 @@ def summarize_bulk(request: SummarizeBulkRequest):
     )
 
 @router.get("/daily", response_model=SummarizeDigestResponse)
-def summarize_daily_digest():
+def summarize_daily_digest(request: Request):
     """
     Generates a digest summary of all emails received in the last 24 hours.
     """
@@ -37,7 +37,7 @@ def summarize_daily_digest():
     yesterday = today - timedelta(days=1)
     
     emails = email_repository.list_messages(start_datetime=yesterday, end_datetime=today)
-    digest = services.run_bulk_summarization(emails)
+    digest, _ = services.run_bulk_summarization(request, emails)
     
     return SummarizeDigestResponse(
         digest=digest,

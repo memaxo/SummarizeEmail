@@ -13,12 +13,18 @@ class EmailNotFoundError(ServiceError):
 
 
 class GraphApiError(ServiceError):
-    """Raised for general errors interacting with the Microsoft Graph API."""
+    """Custom exception for errors related to the Microsoft Graph API."""
     def __init__(self, message: str):
-        super().__init__(f"Microsoft Graph API error: {message}", status_code=502) # Bad Gateway
+        super().__init__(message, status_code=502) # 502 Bad Gateway
 
 
 class SummarizationError(ServiceError):
-    """Raised when the LLM fails to generate a summary."""
+    """Custom exception for errors that occur during the summarization process."""
     def __init__(self, message: str):
-        super().__init__(f"Summarization failed: {message}", status_code=500) 
+        super().__init__(message, status_code=500)
+
+
+class RAGError(ServiceError):
+    """Custom exception for errors during RAG chain execution."""
+    def __init__(self, message: str):
+        super().__init__(message, status_code=500) 

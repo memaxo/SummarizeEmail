@@ -1,0 +1,63 @@
+name: Python CI/CD
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+    - name: Create virtual environment
+      run: uv venv
+
+    - name: Install dependencies
+      run: |
+        source .venv/bin/activate
+        uv pip install -r requirements.txt
+        uv pip install -r requirements-dev.txt
+
+    - name: Run security scan with Bandit
+      run: |
+        source .venv/bin/activate
+        bandit -r app/
+
+    - name: Run tests with pytest
+      run: |
+        source .venv/bin/activate
+        pytest -v --cov=app --cov-report=term-missing
+
+    - name: Build Docker image
+      run: docker build . -t email-summarizer:latest
+
+    - name: Run Docker container test
+      run: |
+        docker run -d --name test-container \
+          -e TENANT_ID=test \
+          -e CLIENT_ID=test \
+          -e CLIENT_SECRET=test \
+          -e TARGET_USER_ID=test \
+          -e OPENAI_API_KEY=test \
+          -e REDIS_URL=redis://localhost:6379 \
+          -p 8000:8000 \
+          email-summarizer:latest
+        sleep 5
+        curl -f http://localhost:8000/health || exit 1
+        docker stop test-container
+        docker rm test-container 

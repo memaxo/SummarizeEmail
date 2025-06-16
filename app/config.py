@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     DB_PASSWORD: str = "password"
     DB_NAME: str = "email_summarizer"
 
+    # RAG Ingestion Scheduling
+    RAG_INGESTION_INTERVAL_HOURS: int = 24
+
     # Load settings from a .env file
     model_config = SettingsConfigDict(
         env_file=os.path.join(os.path.dirname(__file__), '..', '.env'),

@@ -1,18 +1,14 @@
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import MagicMock, call
+from datetime import datetime
+import fakeredis
 
 from app.main import app
 from app.routes.rag import ingest_emails_task
 from app.graph.models import Email, EmailBody
 from app import services
-
-@pytest.fixture
-def client(mocker):
-    """Pytest fixture to create a FastAPI TestClient."""
-    mocker.patch("app.main.init_db", return_value=None)
-    with TestClient(app) as c:
-        yield c
+from app.models import RAGQueryResponse
 
 def test_ingest_emails(client, mocker):
     """
@@ -85,26 +81,34 @@ def test_query_emails(client, mocker):
     """
     Tests the GET /rag/query endpoint.
     """
-    # 1. Mock the VectorDBRepository
-    mock_query_results = [
-        # This is a simplified mock. In a real scenario, you'd use a mock RAGEmail object.
-        {"id": "test_id", "subject": "Test Subject", "content": "Test content.", "sent_date_time": "2025-01-01T12:00:00", "embedding": [0.1, 0.2]}
-    ]
+    # 1. Mock the dependencies
+    mock_db_repo = MagicMock()
+    mocker.patch("app.routes.rag.VectorDBRepository", return_value=mock_db_repo)
     
-    mock_vector_repo_instance = MagicMock()
-    mock_vector_repo_instance.query.return_value = mock_query_results
-    mocker.patch(
-        "app.routes.rag.VectorDBRepository",
-        return_value=mock_vector_repo_instance
-    )
-    
-    # 2. Call the API
+    mock_rag_chain = mocker.patch("app.routes.rag.run_rag_chain")
+
+    # 2. Define mock data
     query = "what is the project status"
+    mock_retrieved_docs = [
+        RAGQueryResponse(id="email1", subject="S1", content="Content 1", sent_date_time=datetime.now())
+    ]
+    expected_answer = "The project is on track for Q3."
+
+    mock_db_repo.query.return_value = mock_retrieved_docs
+    mock_rag_chain.return_value = expected_answer
+
+    # 3. Call the API
     response = client.get(f"/rag/query?q={query}")
     
-    # 3. Assert the response
+    # 4. Assert the response
     assert response.status_code == 200
     data = response.json()
-    assert len(data) == 1
-    assert data[0]["id"] == "test_id"
-    mock_vector_repo_instance.query.assert_called_once_with(query) 
+    assert data["answer"] == expected_answer
+    assert len(data["source_documents"]) == 1
+    assert data["source_documents"][0]["id"] == "email1"
+    
+    # 5. Assert the service calls
+    mock_db_repo.query.assert_called_once_with(query)
+    # This assertion is a bit tricky as the Document objects are created inline
+    # So we check the chain was called, but not the exact content of the docs
+    mock_rag_chain.assert_called_once() 

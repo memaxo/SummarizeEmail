@@ -10,12 +10,15 @@ from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 
 from .config import settings
-from .db.session import init_db
+from .db.session import init_db, get_db
 from .exceptions import ServiceError
 from .models import ErrorResponse, SummarizeResponse
 from .routes import emails, messages, rag, summaries
+from .routes.rag import ingest_emails_task
 
 # Configure structured logging for the application
 structlog.configure(
@@ -35,6 +38,7 @@ limiter = Limiter(
     key_func=get_remote_address,
     default_limits=[f"{settings.RATE_LIMIT_REQUESTS} per {settings.RATE_LIMIT_TIMESCALE}"],
 )
+scheduler = AsyncIOScheduler()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -42,6 +46,7 @@ async def lifespan(app: FastAPI):
     Manages application lifecycle events for startup and shutdown.
     - Connects to Redis on startup.
     - Closes Redis connection on shutdown.
+    - Starts and stops the RAG ingestion scheduler.
     """
     logger.info("FastAPI application startup...")
     logger.info(f"Using LLM provider: {settings.LLM_PROVIDER}")
@@ -56,8 +61,23 @@ async def lifespan(app: FastAPI):
     # Initialize the database
     init_db()
     
+    # Schedule the RAG ingestion task
+    db_session_gen = get_db()
+    db_session = next(db_session_gen)
+    scheduler.add_job(
+        ingest_emails_task,
+        trigger=IntervalTrigger(hours=settings.RAG_INGESTION_INTERVAL_HOURS),
+        args=[db_session, ""] # Pass a DB session and an empty query to ingest all recent emails
+    )
+    scheduler.start()
+    logger.info("RAG ingestion scheduler started", interval_hours=settings.RAG_INGESTION_INTERVAL_HOURS)
+    
     yield
     
+    if scheduler.running:
+        scheduler.shutdown()
+        logger.info("RAG ingestion scheduler shut down.")
+        
     if app.state.redis:
         app.state.redis.close()
         logger.info("Redis connection closed.")

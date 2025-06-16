@@ -27,6 +27,9 @@ slowapi
 # Monitoring
 prometheus-fastapi-instrumentator
 
+# Scheduling
+apscheduler
+
 # Document Parsing
 unstructured[all-docs]
 python-magic

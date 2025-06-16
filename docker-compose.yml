@@ -12,10 +12,18 @@ services:
     # The user must create this file from the .env.example template
     env_file:
       - .env
-    # This service depends on the 'redis' service.
-    # Docker Compose will start 'redis' before starting 'summarizer-api'
+    # Override specific environment variables for Docker networking
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - POSTGRES_SERVER=db
+      - DB_HOST=db
+    # This service depends on both 'redis' and 'db' services.
+    # Docker Compose will start them before starting 'summarizer-api'
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
     # Add a healthcheck to ensure the API is running before it's considered "up"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -24,6 +32,11 @@ services:
       retries: 3
       start_period: 30s
     container_name: email_summarizer_api
+    # Add restart policy
+    restart: unless-stopped
+    # Add volume for logs
+    volumes:
+      - ./logs:/app/logs
 
   # The Redis caching service
   redis:
@@ -40,6 +53,13 @@ services:
       timeout: 5s
       retries: 5
     container_name: email_summarizer_redis
+    # Add restart policy
+    restart: unless-stopped
+    # Add volume for Redis persistence
+    volumes:
+      - redis_data:/data
+    # Enable Redis persistence
+    command: redis-server --appendonly yes
 
   # The Locust load testing service
   locust:
@@ -52,6 +72,8 @@ services:
     depends_on:
       - summarizer-api
     container_name: email_summarizer_locust
+    # Don't auto-restart load testing service
+    restart: "no"
 
   # The PostgreSQL database service with pgvector
   db:
@@ -60,6 +82,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
     environment:
       - POSTGRES_DB=email_summarizer
       - POSTGRES_USER=user
@@ -70,6 +93,8 @@ services:
       timeout: 5s
       retries: 5
     container_name: email_summarizer_db
+    # Add restart policy
+    restart: unless-stopped
 
 # Networks for services to communicate
 # By default, docker-compose sets up a single network for your app
@@ -78,4 +103,5 @@ networks:
     driver: bridge
 
 volumes:
-  postgres_data: 
+  postgres_data:
+  redis_data: 
