@@ -16,7 +16,7 @@ from .config import settings
 from .db.session import init_db
 from .exceptions import ServiceError
 from .models import ErrorResponse, SummarizeResponse
-from .routes import emails, messages, summaries
+from .routes import emails, messages, rag, summaries
 
 # Configure structured logging for the application
 structlog.configure(
@@ -75,6 +75,7 @@ app = FastAPI(
 # Include the API routers
 app.include_router(emails.router)
 app.include_router(messages.router)
+app.include_router(rag.router)
 app.include_router(summaries.router)
 
 # Instrument the app with Prometheus metrics, exposing /metrics

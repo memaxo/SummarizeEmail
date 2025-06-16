@@ -9,9 +9,20 @@ The architecture is built for speed and enterprise-readiness, using Microsoft Gr
 - **FastAPI Backend**: A robust, async-ready API built with Python and FastAPI.
 - **Microsoft Graph Integration**: Securely fetches email content using MSAL for app-only authentication with least-privilege (`Mail.Read`) permissions.
 - **Flexible LLM Support**: Switch between **OpenAI** (`gpt-4o-mini`, etc.) and self-hosted **Ollama** models (e.g., `llama3`) via a simple environment variable.
-- **LangChain Powered**: Utilizes LangChain's `map-reduce` summarization chain, which can handle emails of any length by intelligently splitting and summarizing content.
-- **Performance Caching**: Integrated Redis caching to provide instant responses for previously summarized emails, reducing latency and cost.
-- **Containerized**: Ships with a `Dockerfile` and `docker-compose.yml` for one-command local setup and easy deployment.
+- **Advanced Summarization**:
+    - **Single Email**: Get a quick summary for any specific email.
+    - **Bulk Digest**: Generate a single "digest" summary from a list of emails.
+    - **Daily Digest**: Automatically get a summary of all emails from the last 24 hours.
+- **Powerful Email Search & Retrieval**:
+    - **Full-Text Search**: Use Graph's `$search` functionality for broad queries.
+    - **Granular Filtering**: Filter emails by sender, subject, read status, and date range.
+    - **Full Email Content**: Retrieve the complete body of any email.
+    - **Attachment Handling**: List and download attachments, including their raw `contentBytes`.
+- **Semantic Search with RAG (Retrieval-Augmented Generation)**:
+    - **Ingestion**: Asynchronously fetch emails and store their vector embeddings in a PostgreSQL database with `pgvector`.
+    - **Semantic Query**: Find the most relevant emails based on the *meaning* of your query, not just keywords.
+- **Performance Caching**: Integrated Redis caching for summary operations to reduce latency and cost.
+- **Containerized**: Ships with a `Dockerfile` and `docker-compose.yml` for one-command local setup (including a Postgres + pgvector DB) and easy deployment.
 - **Custom GPT Ready**: Includes a pre-built `openapi.yaml` specification for seamless integration as a GPT Action.
 - **Production Ready**: Features include rate limiting, a health check endpoint, structured logging, and robust error handling.
 
@@ -91,7 +102,7 @@ Create a `.env` file in the project root. You can copy the template:
 cp .env.example .env
 ```
 
-Now, open the `.env` file and fill in the values you gathered in Step 1, along with your OpenAI API key if you're using it.
+Now, open the `.env` file and fill in the values you gathered in Step 1, along with your OpenAI API key and database settings.
 
 ```ini
 # .env
@@ -102,12 +113,22 @@ TARGET_USER_ID="COPIED_FROM_AZURE"
 
 LLM_PROVIDER="openai" # or "ollama"
 OPENAI_API_KEY="sk-YOUR_OPENAI_KEY"
-# ... other settings
+#
+# PostgreSQL Database Settings
+# These credentials are used by the FastAPI service to connect to the PostgreSQL
+# database for the RAG functionality. They must match the credentials defined
+# in docker-compose.yml for the 'db' service.
+#
+POSTGRES_USER=myuser
+POSTGRES_PASSWORD=mypassword
+POSTGRES_DB=email_rag_db
+POSTGRES_SERVER=db
+POSTGRES_PORT=5432
 ```
 
 ### Step 3: Run Locally with Docker Compose
 
-With Docker installed, starting the service is a single command:
+With Docker installed, starting the service, Redis cache, and PostgreSQL database is a single command:
 
 ```bash
 docker-compose up --build
@@ -200,21 +221,88 @@ To get the prototype running on a public server, you can deploy it to an EC2 ins
 
 ## API Endpoints
 
-### `GET /summarize`
+The API is now organized into logical sections for clarity.
 
-Summarizes an email.
+### Email Search & Retrieval
 
--   **Query Parameter**: `msg_id` (string, required) - The Microsoft Graph ID of the email.
--   **Success Response (200)**: A JSON object with the summary, message ID, and cache status.
--   **Error Responses**: Handles 404 (Not Found), 429 (Rate Limit Exceeded), and 5xx errors gracefully.
+#### `GET /emails`
+Search and filter through the target user's mailbox.
 
-### `GET /health`
+- **Query Parameters**:
+    - `search` (string, optional): A free-text search query (uses Graph's `$search`).
+    - `from_address` (string, optional): Filter by sender's email address.
+    - `subject_contains` (string, optional): Filter by a keyword in the subject.
+    - `is_unread` (bool, optional): Filter for only unread emails.
+    - `start_date` (datetime, optional): The start of a date range filter.
+    - `end_date` (datetime, optional): The end of a date range filter.
+    - `limit` (int, optional, default: 25): The maximum number of emails to return.
+- **Success Response (200)**: A JSON array of `Email` objects.
+
+#### `GET /messages/{message_id}`
+Retrieves the full content of a single email message.
+
+- **Path Parameter**: `message_id` (string, required).
+- **Success Response (200)**: A single `Email` object.
+
+#### `GET /messages/{message_id}/attachments`
+Lists all attachments for a given email.
+
+- **Path Parameter**: `message_id` (string, required).
+- **Success Response (200)**: A JSON array of `Attachment` metadata objects.
+
+#### `GET /messages/{message_id}/attachments/{attachment_id}`
+Retrieves a single attachment, including its base64-encoded content.
+
+- **Path Parameters**: `message_id`, `attachment_id` (strings, required).
+- **Success Response (200)**: A single `Attachment` object with the `contentBytes` field populated.
+
+### Summarization
+
+#### `GET /messages/{message_id}/summary`
+Generates a summary for a single email.
+
+-   **Path Parameter**: `message_id` (string, required).
+-   **Success Response (200)**: A JSON object with the summary.
+
+#### `POST /summaries`
+Generates a single "digest" summary from a list of email IDs.
+
+- **Request Body**: A JSON object with a `message_ids` key pointing to a list of strings.
+  ```json
+  {
+    "message_ids": ["id1", "id2", "id3"]
+  }
+  ```
+- **Success Response (200)**: A JSON object containing the combined `digest`.
+
+#### `GET /summaries/daily`
+Generates a digest summary of all emails received in the last 24 hours.
+
+- **Success Response (200)**: A JSON object containing the `digest`.
+
+### Semantic Search (RAG)
+
+#### `POST /rag/ingest`
+Triggers a background task to fetch and embed emails into the vector database.
+
+- **Query Parameter**: `query` (string, optional): A Graph API query string (like the one for `/emails`) to filter which emails to ingest. If omitted, it may ingest recent emails by default.
+- **Success Response (202 - Accepted)**: A confirmation message that the ingestion has started.
+
+#### `GET /rag/query`
+Performs a semantic search against the ingested emails.
+
+- **Query Parameter**: `q` (string, required): The natural language query to search for.
+- **Success Response (200)**: A list of relevant `Email` objects found in the vector database.
+
+### Monitoring
+
+#### `GET /health`
 
 A health check endpoint to monitor the service status and its dependency on Redis.
 
 -   **Success Response (200)**: A JSON object indicating the status of the API and its connection to Redis.
 
-### `GET /metrics`
+#### `GET /metrics`
 
 An endpoint that exposes Prometheus-compatible metrics for monitoring application performance, request latency, and status codes.
 

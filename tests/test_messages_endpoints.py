@@ -14,10 +14,11 @@ TEST_DATA_DIR = os.path.join(os.path.dirname(__file__), "data", "golden")
 
 
 @pytest.fixture
-def client():
+def client(mocker):
     """
     Pytest fixture to create a FastAPI TestClient.
     """
+    mocker.patch("app.main.init_db", return_value=None)
     with TestClient(app) as c:
         yield c
 

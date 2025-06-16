@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
@@ -32,4 +33,17 @@ class SummarizeDigestResponse(BaseModel):
     Defines the successful response for a digest summary.
     """
     digest: str = Field(..., description="The generated digest summary from multiple emails.")
-    llm_provider: str = Field(..., description="The LLM provider used for the summary.") 
+    llm_provider: str = Field(..., description="The LLM provider used for the summary.")
+
+
+class RAGQueryResponse(BaseModel):
+    """
+    Defines the response for a RAG query, representing a single retrieved document.
+    """
+    id: str
+    subject: str
+    content: str
+    sent_date_time: datetime
+
+    class Config:
+        from_attributes = True 

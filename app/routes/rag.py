@@ -5,7 +5,7 @@ from typing import List
 from ..db.session import get_db
 from ..graph.email_repository import email_repository
 from ..rag.vector_db_repository import VectorDBRepository
-from ..models import ErrorResponse
+from ..models import ErrorResponse, RAGQueryResponse
 from ..rag.models import EmailEmbedding as RAGEmail
 
 router = APIRouter(
@@ -30,7 +30,7 @@ def ingest_emails(query: str, background_tasks: BackgroundTasks, db: Session = D
     return {"message": "Email ingestion started in the background."}
 
 
-@router.get("/query", response_model=List[RAGEmail])
+@router.get("/query", response_model=List[RAGQueryResponse])
 def query_emails(q: str, db: Session = Depends(get_db)):
     """
     Performs a semantic search over the ingested emails.

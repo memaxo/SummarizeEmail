@@ -124,7 +124,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-  /emails/:
+  /emails:
     get:
       summary: Search for Emails
       description: Searches for emails based on specified criteria like sender, subject, and date range.
@@ -177,7 +177,50 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Email'
-  /summaries/:
+  /rag/ingest:
+    post:
+      summary: Ingest Emails for RAG
+      description: Triggers a background task to fetch emails from a search query and ingest them into the vector database for semantic search.
+      operationId: ingestEmailsForRAG
+      parameters:
+        - name: query
+          in: query
+          required: true
+          description: "The search query to find emails to ingest (e.g., 'from:user@example.com')."
+          schema:
+            type: string
+      responses:
+        '202':
+          description: Accepted for processing.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+  /rag/query:
+    get:
+      summary: Query Ingested Emails
+      description: Performs a semantic search over the ingested emails.
+      operationId: queryIngestedEmails
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: "The natural language query to search for."
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A list of relevant emails found via semantic search.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RAGQueryResponse'
+  /summaries:
     post:
       summary: Summarize Multiple Emails
       description: Creates a single digest summary from a list of provided email message IDs.
@@ -285,4 +328,16 @@ components:
       required:
         - detail
       example:
-        detail: "Email with message_id 'xyz' not found." 
+        detail: "Email with message_id 'xyz' not found."
+    RAGQueryResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        subject:
+          type: string
+        content:
+          type: string
+        sent_date_time:
+          type: string
+          format: date-time 

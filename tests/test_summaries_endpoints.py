@@ -6,8 +6,9 @@ from app.main import app
 from app.graph.models import Email, EmailBody
 
 @pytest.fixture
-def client():
+def client(mocker):
     """Pytest fixture to create a FastAPI TestClient."""
+    mocker.patch("app.main.init_db", return_value=None)
     with TestClient(app) as c:
         yield c
 
