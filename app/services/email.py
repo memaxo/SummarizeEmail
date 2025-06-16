@@ -9,11 +9,12 @@ from langchain_openai import ChatOpenAI
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain.chains.summarize import load_summarize_chain
 
-from .auth import get_graph_token
-from .config import settings
-from .exceptions import EmailNotFoundError, GraphApiError, SummarizationError
-from .graph.email_repository import email_repository
-from .graph.models import Email
+from ..auth import get_graph_token
+from ..config import settings
+from ..exceptions import EmailNotFoundError, GraphApiError, SummarizationError
+from ..graph.email_repository import email_repository
+from ..graph.models import Email
+from .document_parser import document_parser
 
 logger = logging.getLogger(__name__)
 
@@ -42,18 +43,36 @@ def _get_llm() -> BaseChatModel:
         raise ValueError(f"Unsupported LLM provider: {settings.LLM_PROVIDER}")
 
 
-def fetch_email_content(message_id: str) -> str:
+def fetch_email_content(message_id: str, include_attachments: bool = False) -> str:
     """
-    Fetches the body content of a specific email message using the repository.
+    Fetches the content of a specific email, optionally including text from attachments.
 
     Args:
         message_id: The unique identifier of the Microsoft Outlook message.
+        include_attachments: Whether to fetch and parse attachments.
 
     Returns:
-        The text content of the email body.
+        The text content of the email, including attachment text if requested.
     """
     email = email_repository.get_message(message_id)
-    return email.get_full_content()
+    content = email.get_full_content()
+
+    if include_attachments:
+        logger.info("Fetching attachments for email", message_id=message_id)
+        attachments = email_repository.list_attachments(message_id)
+        
+        for attachment_meta in attachments:
+            logger.info("Parsing attachment", attachment_id=attachment_meta.id)
+            # Fetch the full attachment with its content bytes
+            full_attachment = email_repository.get_attachment(message_id, attachment_meta.id)
+            
+            # Parse the content using our service
+            attachment_text = document_parser.parse_content(full_attachment.contentBytes)
+            
+            if attachment_text:
+                content += f"\n\n--- Attachment: {attachment_meta.name} ---\n{attachment_text}"
+
+    return content
 
 
 def run_summarization_chain(content: str) -> str:

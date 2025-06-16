@@ -1,33 +1,37 @@
-# Core web framework
-fastapi==0.115.12
-uvicorn[standard]==0.30.1
-pydantic>2
+# LangChain and related dependencies
+langchain
+langchain-community
+langchain-core
+langchain-openai
+langchain-text-splitters
 
-# Configuration management
-pydantic-settings==2.4.0
-python-dotenv==1.0.1
+# Database
+psycopg2-binary
+pgvector==0.4.1
+sqlalchemy
 
-# Microsoft Graph API authentication
-msal==1.29.0
-requests==2.32.3
+# FastAPI and web server
+fastapi
+uvicorn
 
-# LangChain for summarization
-langchain==0.2.5
-langchain-openai==0.1.8
-langchain-community==0.2.5
-langchain-text-splitters==0.2.1
+# Microsoft Graph and Auth
+requests
+msal
 
-# Caching
-redis==5.0.7
+# Utilities
+python-dotenv
+structlog
+redis
+slowapi
 
-# API Rate Limiting
-slowapi==0.1.9
+# Monitoring
+prometheus-fastapi-instrumentator
 
-# Observability
-prometheus-fastapi-instrumentator==6.1.0
-structlog==24.1.0
+# Document Parsing
+unstructured[all-docs]
+python-magic
+lxml
+python-docx
+pypdf
 
-# Vector Database and RAG
-sqlalchemy==2.0.31
-psycopg2-binary==2.9.9
-pgvector==0.4.1 
+# Development dependencies are in requirements-dev.txt 

@@ -5,7 +5,7 @@ import responses
 from fastapi.testclient import TestClient
 import fakeredis
 
-from app.main import app, services
+from app.main import app
 from app.graph.models import Email, EmailBody, Attachment
 from app.exceptions import EmailNotFoundError, GraphApiError
 
@@ -45,10 +45,10 @@ def test_summarize_happy_path(client, mocker):
         toRecipients=[{"emailAddress": {"address": "bob@example.com", "name": "Bob"}}],
         sentDateTime="2025-06-16T10:00:00Z"
     )
-    mocker.patch("app.routes.messages.services.fetch_email_content", return_value=mock_email.get_full_content())
+    mocker.patch("app.services.fetch_email_content", return_value=mock_email.get_full_content())
 
     # 4. Mock the summarization chain to return the expected string directly
-    mocker.patch("app.routes.messages.services.run_summarization_chain", return_value=expected_summary)
+    mocker.patch("app.services.run_summarization_chain", return_value=expected_summary)
 
     # 5. Call the API endpoint
     api_response = client.get(f"/messages/{message_id}/summary")
@@ -59,6 +59,28 @@ def test_summarize_happy_path(client, mocker):
     assert response_json["summary"] == expected_summary
     assert response_json["message_id"] == message_id
     assert response_json["cached"] is False
+
+
+def test_summarize_with_attachments(client, mocker):
+    """
+    Tests that the `include_attachments` flag is correctly passed to the service layer.
+    """
+    message_id = "test_message_id_456"
+    expected_summary = "This is a summary of an email and its attachment."
+    
+    # 1. Mock the service-level function that gets called by the endpoint
+    mock_fetch = mocker.patch("app.services.fetch_email_content", return_value="email and attachment content")
+    mocker.patch("app.services.run_summarization_chain", return_value=expected_summary)
+    
+    # 2. Call the API endpoint with the query parameter
+    response = client.get(f"/messages/{message_id}/summary?include_attachments=true")
+    
+    # 3. Assert the response is successful
+    assert response.status_code == 200
+    assert response.json()["summary"] == expected_summary
+    
+    # 4. Assert that the service function was called with the correct arguments
+    mock_fetch.assert_called_once_with(message_id, include_attachments=True)
 
 
 @responses.activate
@@ -74,7 +96,7 @@ def test_summarize_graph_api_error(client, mocker):
     Tests that a 500 error from Graph API results in a 502 from our service.
     """
     message_id = "graph_error_id"
-    mocker.patch("app.routes.messages.services.fetch_email_content", side_effect=GraphApiError("Test Graph API Error"))
+    mocker.patch("app.services.fetch_email_content", side_effect=GraphApiError("Test Graph API Error"))
     
     api_response = client.get(f"/messages/{message_id}/summary")
 
@@ -87,7 +109,7 @@ def test_summarize_not_found(client, mocker):
     Tests the scenario where the requested email message is not found (404).
     """
     message_id = "non_existent_id"
-    mocker.patch("app.routes.messages.services.fetch_email_content", side_effect=EmailNotFoundError(message_id))
+    mocker.patch("app.services.fetch_email_content", side_effect=EmailNotFoundError(message_id))
     
     api_response = client.get(f"/messages/{message_id}/summary")
 

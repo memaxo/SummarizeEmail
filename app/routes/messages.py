@@ -1,8 +1,9 @@
 from typing import List
 
-from fastapi import APIRouter, Path, Request
+from fastapi import APIRouter, Path, Query, Request
 
 from .. import services
+from ..config import settings
 from ..graph.email_repository import email_repository
 from ..graph.models import Attachment, Email
 from ..models import ErrorResponse, SummarizeResponse
@@ -38,22 +39,26 @@ def summarize_email(
         description="The immutable ID of the Outlook email message.",
         examples=["AAMkAGI1ZTMx..."],
     ),
+    include_attachments: bool = Query(
+        False, 
+        description="Set to true to parse and include the content of attachments in the summary."
+    ),
 ):
     """
-    Summarizes a single Outlook email message.
+    Summarizes a single Outlook email message, with an option to include attachments.
     """
     # This endpoint is now a bit redundant with the bulk endpoint,
     # but we keep it for direct, single-email summarization.
     # The caching logic is now handled within the main app logic to
     # avoid duplication.
-    content = services.fetch_email_content(msg_id)
+    content = services.fetch_email_content(msg_id, include_attachments=include_attachments)
     summary = services.run_summarization_chain(content)
 
     return SummarizeResponse(
         summary=summary,
         message_id=msg_id,
         cached=False,  # Caching logic is now centralized
-        llm_provider=services.settings.LLM_PROVIDER,
+        llm_provider=settings.LLM_PROVIDER,
     )
 
 @router.get("/{msg_id}/attachments", response_model=List[Attachment])
