@@ -1,12 +1,26 @@
+from typing import List
+
 from fastapi import APIRouter, Path, Request
 
 from .. import services
+from ..graph.email_repository import email_repository
+from ..graph.models import Attachment, Email
 from ..models import ErrorResponse, SummarizeResponse
 
-router = APIRouter()
+router = APIRouter(
+    prefix="/messages",
+    tags=["Messages"],
+)
+
+@router.get("/{msg_id}", response_model=Email)
+def get_message(msg_id: str = Path(..., description="The ID of the email to retrieve.")):
+    """
+    Retrieves a single email message by its ID.
+    """
+    return email_repository.get_message(msg_id)
 
 @router.get(
-    "/messages/{msg_id}/summary",
+    "/{msg_id}/summary",
     response_model=SummarizeResponse,
     responses={
         400: {"model": ErrorResponse, "description": "Invalid input"},
@@ -40,4 +54,21 @@ def summarize_email(
         message_id=msg_id,
         cached=False,  # Caching logic is now centralized
         llm_provider=services.settings.LLM_PROVIDER,
-    ) 
+    )
+
+@router.get("/{msg_id}/attachments", response_model=List[Attachment])
+def list_attachments(msg_id: str = Path(..., description="The ID of the email.")):
+    """
+    Lists all attachments for a specific email message.
+    """
+    return email_repository.list_attachments(msg_id)
+
+@router.get("/{msg_id}/attachments/{att_id}", response_model=Attachment)
+def get_attachment(
+    msg_id: str = Path(..., description="The ID of the email."),
+    att_id: str = Path(..., description="The ID of the attachment.")
+):
+    """
+    Retrieves a single attachment, including its content bytes.
+    """
+    return email_repository.get_attachment(message_id=msg_id, attachment_id=att_id) 

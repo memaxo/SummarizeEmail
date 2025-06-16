@@ -5,7 +5,7 @@ from typing import Dict, Any, List, Optional
 from ..auth import get_graph_token
 from ..config import settings
 from ..exceptions import EmailNotFoundError, GraphApiError
-from .models import Email
+from .models import Email, Attachment
 from datetime import datetime
 
 logger = structlog.get_logger(__name__)
@@ -57,6 +57,7 @@ class EmailRepository:
 
     def list_messages(
         self,
+        search: Optional[str] = None,
         start_datetime: Optional[datetime] = None,
         end_datetime: Optional[datetime] = None,
         from_address: Optional[str] = None,
@@ -68,6 +69,7 @@ class EmailRepository:
         Fetches a list of email messages, with optional filtering.
 
         Args:
+            search: A free-text search term (uses Graph's $search).
             start_datetime: The start date for the email search.
             end_datetime: The end date for the email search.
             from_address: Filter emails from a specific sender address.
@@ -100,10 +102,12 @@ class EmailRepository:
             "$top": str(top),
             "$orderby": "sentDateTime desc",
         }
+        if search:
+            params["$search"] = f'"{search}"'  # Encapsulate search term in quotes
         if filters:
             params["$filter"] = " and ".join(filters)
 
-        logger.info("Fetching email list from Graph API", filter=params.get("$filter"))
+        logger.info("Fetching email list from Graph API", filter=params.get("$filter"), search=params.get("$search"))
 
         try:
             response = requests.get(endpoint, headers=headers, params=params)
@@ -117,6 +121,64 @@ class EmailRepository:
         except Exception as e:
             logger.error("An unexpected error occurred while fetching email list", exc_info=e)
             raise GraphApiError(str(e)) from e
+
+    def list_attachments(self, message_id: str) -> List[Attachment]:
+        """
+        Fetches the list of attachments for a given message.
+
+        Args:
+            message_id: The ID of the email message.
+
+        Returns:
+            A list of Attachment objects.
+        """
+        endpoint = f"{self._base_url}/messages/{message_id}/attachments"
+        headers = self._get_auth_headers()
+        params = {"$select": "id,name,contentType,size,isInline"}
+
+        logger.info("Fetching attachments for message", message_id=message_id)
+        
+        try:
+            response = requests.get(endpoint, headers=headers, params=params)
+            response.raise_for_status()
+            
+            data = response.json()
+            attachments_data = data.get("value", [])
+            return [Attachment(**att) for att in attachments_data]
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                # This could mean message not found, or just no attachments.
+                # The Graph API returns 404 in both cases for this endpoint.
+                logger.warn("Could not find message or it has no attachments.", message_id=message_id)
+                return []
+            raise GraphApiError(f"Failed to fetch attachments. Status: {e.response.status_code}, Response: {e.response.text}") from e
+
+    def get_attachment(self, message_id: str, attachment_id: str) -> Attachment:
+        """
+        Fetches a single attachment, including its content bytes.
+
+        Args:
+            message_id: The ID of the email message.
+            attachment_id: The ID of the attachment.
+
+        Returns:
+            An Attachment object, including the base64 encoded content.
+        """
+        endpoint = f"{self._base_url}/messages/{message_id}/attachments/{attachment_id}"
+        headers = self._get_auth_headers()
+        
+        logger.info("Fetching single attachment", message_id=message_id, attachment_id=attachment_id)
+
+        try:
+            response = requests.get(endpoint, headers=headers)
+            response.raise_for_status()
+            
+            attachment_data = response.json()
+            return Attachment(**attachment_data)
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                raise EmailNotFoundError(f"Attachment with ID '{attachment_id}' not found on message '{message_id}'.") from e
+            raise GraphApiError(f"Failed to fetch attachment. Status: {e.response.status_code}, Response: {e.response.text}") from e
 
     def _get_auth_headers(self) -> Dict[str, Any]:
         """

@@ -47,6 +47,136 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /messages/{msg_id}:
+    get:
+      summary: Get a Single Email
+      description: Retrieves a single, full email message by its ID.
+      operationId: getMessageById
+      parameters:
+        - name: msg_id
+          in: path
+          required: true
+          description: The ID of the email to retrieve.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The full email object.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Email'
+        '404':
+          description: Email not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /messages/{msg_id}/attachments:
+    get:
+      summary: List Attachments
+      description: Retrieves a list of attachments for a specific email.
+      operationId: listAttachments
+      parameters:
+        - name: msg_id
+          in: path
+          required: true
+          description: The ID of the email.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A list of attachment metadata objects.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Attachment'
+  /messages/{msg_id}/attachments/{att_id}:
+    get:
+      summary: Get an Attachment
+      description: Retrieves a single attachment, including its base64-encoded content.
+      operationId: getAttachmentById
+      parameters:
+        - name: msg_id
+          in: path
+          required: true
+          description: The ID of the email.
+          schema:
+            type: string
+        - name: att_id
+          in: path
+          required: true
+          description: The ID of the attachment.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The full attachment object with content.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attachment'
+        '404':
+          description: Attachment not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /emails/:
+    get:
+      summary: Search for Emails
+      description: Searches for emails based on specified criteria like sender, subject, and date range.
+      operationId: searchEmails
+      parameters:
+        - name: search
+          in: query
+          description: "A free-text search query (uses Graph's $search)."
+          schema:
+            type: string
+        - name: from_address
+          in: query
+          description: "Filter by the sender's email address."
+          schema:
+            type: string
+        - name: subject_contains
+          in: query
+          description: "Filter by a keyword in the subject."
+          schema:
+            type: string
+        - name: is_unread
+          in: query
+          description: "Filter for unread (True) or read (False) emails."
+          schema:
+            type: boolean
+        - name: start_date
+          in: query
+          description: "The start date for the search window (ISO 8601 format)."
+          schema:
+            type: string
+            format: date-time
+        - name: end_date
+          in: query
+          description: "The end date for the search window (ISO 8601 format)."
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          description: "The maximum number of emails to return (1-100)."
+          schema:
+            type: integer
+            default: 25
+      responses:
+        '200':
+          description: A list of matching emails.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Email'
   /summaries/:
     post:
       summary: Summarize Multiple Emails
@@ -105,6 +235,47 @@ components:
           type: string
         llm_provider:
           type: string
+    Attachment:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        contentType:
+          type: string
+        size:
+          type: integer
+        isInline:
+          type: boolean
+        contentBytes:
+          type: string
+          format: byte
+        contentId:
+          type: string
+    Email:
+      type: object
+      properties:
+        id:
+          type: string
+        subject:
+          type: string
+        body:
+          type: object
+          properties:
+            content:
+              type: string
+            contentType:
+              type: string
+        from:
+          type: object
+        toRecipients:
+          type: array
+          items:
+            type: object
+        sentDateTime:
+          type: string
+          format: date-time
     Error:
       type: object
       properties:

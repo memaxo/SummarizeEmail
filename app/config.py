@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     RATE_LIMIT_REQUESTS: int = 100
     RATE_LIMIT_TIMESCALE: str = "minute"
 
+    # Database Configuration
+    DB_HOST: str = "db"
+    DB_PORT: int = 5432
+    DB_USER: str = "user"
+    DB_PASSWORD: str = "password"
+    DB_NAME: str = "email_summarizer"
+
     # Load settings from a .env file
     model_config = SettingsConfigDict(
         env_file=os.path.join(os.path.dirname(__file__), '..', '.env'),

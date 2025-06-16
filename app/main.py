@@ -13,6 +13,7 @@ from slowapi.util import get_remote_address
 
 from . import services
 from .config import settings
+from .db.session import init_db
 from .exceptions import ServiceError
 from .models import ErrorResponse, SummarizeResponse
 from .routes import emails, messages, summaries
@@ -52,6 +53,9 @@ async def lifespan(app: FastAPI):
     except redis.exceptions.ConnectionError as e:
         logger.error("Could not connect to Redis during startup.", exc_info=e)
         app.state.redis = None
+    
+    # Initialize the database
+    init_db()
     
     yield
     

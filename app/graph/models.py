@@ -27,4 +27,14 @@ class Email(BaseModel):
         """
         Combines the subject and body for a complete summary context.
         """
-        return f"Subject: {self.subject}\n\n{self.body.content}" 
+        return f"Subject: {self.subject}\n\n{self.body.content}"
+
+class Attachment(BaseModel):
+    """Represents a file attachment from Microsoft Graph."""
+    id: str
+    name: str
+    content_type: str = Field(alias="contentType")
+    size_in_bytes: int = Field(alias="size")
+    is_inline: bool = Field(alias="isInline")
+    content_bytes: Optional[str] = Field(alias="contentBytes", default=None)
+    content_id: Optional[str] = Field(alias="contentId", default=None) 

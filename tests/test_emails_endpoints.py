@@ -28,6 +28,7 @@ def test_search_emails_no_filters(client, mocker):
     assert response.status_code == 200
     assert response.json() == []
     mock_list_messages.assert_called_once_with(
+        search=None,
         from_address=None,
         subject_contains=None,
         is_unread=None,
@@ -50,6 +51,7 @@ def test_search_emails_with_filters(client, mocker):
     
     # 2. Define filter parameters
     params = {
+        "search": "meeting",
         "from_address": "test@example.com",
         "subject_contains": "urgent",
         "is_unread": "true",
@@ -67,6 +69,7 @@ def test_search_emails_with_filters(client, mocker):
     
     # Extract the call arguments to verify them
     call_args = mock_list_messages.call_args[1]
+    assert call_args["search"] == params["search"]
     assert call_args["from_address"] == params["from_address"]
     assert call_args["subject_contains"] == params["subject_contains"]
     assert call_args["is_unread"] is True

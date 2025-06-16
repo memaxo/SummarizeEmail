@@ -53,8 +53,29 @@ services:
       - summarizer-api
     container_name: email_summarizer_locust
 
+  # The PostgreSQL database service with pgvector
+  db:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=email_summarizer
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d email_summarizer"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    container_name: email_summarizer_db
+
 # Networks for services to communicate
 # By default, docker-compose sets up a single network for your app
 networks:
   default:
-    driver: bridge 
+    driver: bridge
+
+volumes:
+  postgres_data: 

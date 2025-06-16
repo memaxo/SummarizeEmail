@@ -25,4 +25,9 @@ slowapi==0.1.9
 
 # Observability
 prometheus-fastapi-instrumentator==6.1.0
-structlog==24.1.0 
+structlog==24.1.0
+
+# Vector Database and RAG
+sqlalchemy==2.0.31
+psycopg2-binary==2.9.9
+pgvector==0.2.6 

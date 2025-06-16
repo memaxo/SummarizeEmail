@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 import fakeredis
 
 from app.main import app, services
-from app.graph.models import Email, EmailBody
+from app.graph.models import Email, EmailBody, Attachment
 from app.exceptions import EmailNotFoundError, GraphApiError
 
 # Path to the directory containing test data
@@ -101,3 +101,55 @@ def test_health_check(client):
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_get_message(client, mocker):
+    """Tests retrieving a single message."""
+    message_id = "test_id"
+    mock_email = Email(
+        id=message_id,
+        subject="Test",
+        body=EmailBody(content="c", contentType="t"),
+        from_address={"emailAddress": {}},
+        toRecipients=[],
+        sentDateTime="-"
+    )
+    mocker.patch("app.routes.messages.email_repository.get_message", return_value=mock_email)
+    
+    response = client.get(f"/messages/{message_id}")
+    
+    assert response.status_code == 200
+    assert response.json()["id"] == message_id
+
+
+def test_list_attachments(client, mocker):
+    """Tests listing attachments for a message."""
+    message_id = "test_id"
+    mock_attachments = [Attachment(id="att1", name="test.txt", contentType="text/plain", size=123, isInline=False)]
+    mocker.patch("app.routes.messages.email_repository.list_attachments", return_value=mock_attachments)
+    
+    response = client.get(f"/messages/{message_id}/attachments")
+
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+    assert response.json()[0]["name"] == "test.txt"
+
+
+def test_get_single_attachment(client, mocker):
+    """Tests retrieving a single attachment."""
+    message_id = "test_id"
+    attachment_id = "att1"
+    mock_attachment = Attachment(
+        id=attachment_id,
+        name="test.txt",
+        contentType="text/plain",
+        size=123,
+        isInline=False,
+        contentBytes="dGVzdA==" # "test" in base64
+    )
+    mocker.patch("app.routes.messages.email_repository.get_attachment", return_value=mock_attachment)
+    
+    response = client.get(f"/messages/{message_id}/attachments/{attachment_id}")
+    
+    assert response.status_code == 200
+    assert response.json()["contentBytes"] == "dGVzdA=="
