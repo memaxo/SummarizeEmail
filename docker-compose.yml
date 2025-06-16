@@ -41,6 +41,18 @@ services:
       retries: 5
     container_name: email_summarizer_redis
 
+  # The Locust load testing service
+  locust:
+    image: locustio/locust
+    ports:
+      - "8089:8089" # Locust web UI
+    volumes:
+      - ./tests/load:/mnt/locust
+    command: -f /mnt/locust/locustfile.py --host http://summarizer-api:8000
+    depends_on:
+      - summarizer-api
+    container_name: email_summarizer_locust
+
 # Networks for services to communicate
 # By default, docker-compose sets up a single network for your app
 networks:

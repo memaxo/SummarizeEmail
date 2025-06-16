@@ -123,7 +123,7 @@ The API will be available at `http://localhost:8000`.
 To get the prototype running on a public server, you can deploy it to an EC2 instance.
 
 1.  **Launch an EC2 Instance**:
-    *   **AMI**: Use Amazon Linux 2023 or Ubuntu 22.04 LTS.
+    *   **AMI**: Use Amazon Linux 2023 (as indicated by the `ec2-user`).
     *   **Instance Type**: `t3.small` is sufficient for the prototype.
     *   **Security Group (Firewall)**: Create a new security group and add **inbound rules** to allow traffic on:
         *   **Port 22 (SSH)** from your IP address for management.
@@ -131,20 +131,24 @@ To get the prototype running on a public server, you can deploy it to an EC2 ins
 
 2.  **SSH into the Instance and Install Dependencies**:
     ```bash
-    # SSH into your new instance
-    ssh -i /path/to/your-key.pem ec2-user@<your-ec2-public-dns>
+    # SSH into your new instance using your key
+    ssh -i /path/to/your/jack-mazac-workbox.pem ec2-user@ec2-52-43-205-252.us-west-2.compute.amazonaws.com
 
-    # Install Git, Docker, and Docker Compose
+    # Verify Python and Pip are installed (should be pre-installed on Amazon Linux 2023)
+    python3 --version
+    pip3 --version
+
+    # Install Git and Docker
     sudo yum update -y
     sudo yum install git docker -y
     sudo service docker start
     sudo usermod -aG docker ec2-user # Log out and back in to apply group changes
+
+    # Install uv (the fast Python package installer)
+    curl -LsSf https://astral.sh/uv/install.sh | sh
     
-    # Install Docker Compose v2
-    DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
-    mkdir -p $DOCKER_CONFIG/cli-plugins
-    curl -SL https://github.com/docker/compose/releases/download/v2.27.0/docker-compose-linux-x86_64 -o $DOCKER_CONFIG/cli-plugins/docker-compose
-    chmod +x $DOCKER_CONFIG/cli-plugins/docker-compose
+    # Add uv to the path for the current session
+    source $HOME/.cargo/env
     ```
 
 3.  **Clone and Run the Application**:
@@ -162,8 +166,8 @@ To get the prototype running on a public server, you can deploy it to an EC2 ins
     ```
 
 4.  **Access Your Service**:
-    *   Your API is now available at `http://<your-ec2-public-dns>:8000`.
-    *   Test the health check: `curl http://<your-ec2-public-dns>:8000/health`
+    *   Your API is now available at `http://ec2-52-43-205-252.us-west-2.compute.amazonaws.com:8000`.
+    *   Test the health check: `curl http://ec2-52-43-205-252.us-west-2.compute.amazonaws.com:8000/health`
 
 ### Step 5: Set Up the Custom GPT Action
 
@@ -172,7 +176,7 @@ To get the prototype running on a public server, you can deploy it to an EC2 ins
     *   Change the `url` under `servers` to your public EC2 endpoint.
     ```yaml
     servers:
-      - url: http://<your-ec2-public-dns>:8000
+      - url: http://ec2-52-43-205-252.us-west-2.compute.amazonaws.com:8000
     ```
 
 2.  **Create the Custom GPT**:
@@ -212,4 +216,40 @@ A health check endpoint to monitor the service status and its dependency on Redi
 
 ### `GET /metrics`
 
-An endpoint that exposes Prometheus-compatible metrics for monitoring application performance, request latency, and status codes. 
+An endpoint that exposes Prometheus-compatible metrics for monitoring application performance, request latency, and status codes.
+
+---
+
+## Testing
+
+### Unit and Integration Tests
+
+The project includes a comprehensive test suite using `pytest`. To run the tests, ensure you have installed the development dependencies:
+
+```bash
+uv pip install -r requirements-dev.txt
+pytest
+```
+
+### Load Testing
+
+This project uses [Locust](https://locust.io/) to simulate user traffic and measure performance under load. A `locust` service is defined in the `docker-compose.yml` file for easy setup.
+
+1.  **Start the Services**:
+    From the project root, run:
+    ```bash
+    docker-compose up --build
+    ```
+    This will start the `summarizer-api`, `redis`, and `locust` services.
+
+2.  **Open the Locust Web UI**:
+    Navigate to `http://localhost:8089` in your web browser.
+
+3.  **Start a New Load Test**:
+    *   **Number of users**: Enter the total number of concurrent users to simulate (e.g., `100`).
+    *   **Spawn rate**: Enter the number of users to start per second (e.g., `10`).
+    *   **Host**: The host should already be set to `http://summarizer-api:8000`.
+    *   Click **Start swarming**.
+
+4.  **View Results**:
+    The "Charts" and "Statistics" tabs in the Locust UI will show real-time data on request rates, response times, and any failures. 

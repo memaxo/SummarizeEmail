@@ -1,0 +1,38 @@
+name: Python Application CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Create virtual environment
+        run: uv venv
+
+      - name: Install dependencies
+        run: uv pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run security scan with Bandit
+        run: bandit -r app/
+
+      - name: Run tests with pytest
+        run: pytest
+
+      - name: Build Docker image
+        run: docker build . -t email-summarizer:latest
