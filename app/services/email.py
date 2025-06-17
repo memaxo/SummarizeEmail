@@ -10,8 +10,12 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_google_vertexai import ChatVertexAI
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain.chains.summarize import load_summarize_chain
-from langchain_core.prompts import ChatPromptTemplate
+from langchain.chains.llm import LLMChain
+from langchain.chains.combine_documents.stuff import StuffDocumentsChain
+from langchain.chains import MapReduceDocumentsChain, ReduceDocumentsChain
+from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain.chains.question_answering import load_qa_chain
 from langchain_core.output_parsers import StrOutputParser
 from pydantic import BaseModel, Field
 from fastapi import Request
@@ -36,6 +40,20 @@ from ..prompts import (
 from app.logger import logger
 
 logger = structlog.get_logger(__name__)
+
+
+# The RAG_PROMPT is a ChatPromptTemplate. For the QA chain, we need the underlying PromptTemplate.
+# Let's define a simpler PromptTemplate for the map-reduce chain context.
+# This will be used in the "map" step.
+QUESTION_PROMPT_TEMPLATE = """Use the following portion of a long document to see if any of the text is relevant to answer the question.
+Return any relevant text verbatim.
+---
+{context}
+---
+Relevant text:"""
+QUESTION_PROMPT = PromptTemplate(
+    template=QUESTION_PROMPT_TEMPLATE, input_variables=["context", "question"]
+)
 
 
 # Pydantic models for structured output
@@ -135,24 +153,31 @@ async def get_user_id_from_token(request: Request) -> str:
         return settings.TARGET_USER_ID
 
 
-async def fetch_email_content(
+def fetch_email_content(
     msg_id: str,
-    request: Request,
+    user_id: str,
     include_attachments: bool = False
 ) -> str:
     """Fetch email content from the repository, respecting mock mode."""
     try:
-        # The graph_repo is now a singleton that respects mock mode
-        email = graph_repo.get_message(msg_id)
+        # Instantiate the correct repository based on mock settings
+        if settings.USE_MOCK_GRAPH_API:
+            from ..graph.mock_email_repository import MockEmailRepository
+            repo = MockEmailRepository()
+        else:
+            from ..graph.email_repository import EmailRepository
+            repo = EmailRepository(user_id=user_id)
+
+        email = repo.get_message(msg_id)
         content = email.get_full_content()
 
         if include_attachments:
-            logger.info("Fetching attachments for email", message_id=msg_id)
-            attachments = graph_repo.list_attachments(msg_id)
+            logger.info("Fetching attachments for email", message_id=msg_id, user_id=user_id)
+            attachments = repo.list_attachments(msg_id)
             
             for attachment_meta in attachments:
                 logger.info("Parsing attachment", attachment_id=attachment_meta.id)
-                full_attachment = graph_repo.get_attachment(msg_id, attachment_meta.id)
+                full_attachment = repo.get_attachment(msg_id, attachment_meta.id)
                 attachment_text = document_parser.parse_content(full_attachment.contentBytes)
                 
                 if attachment_text:
@@ -246,6 +271,8 @@ def run_summarization_chain(request: Request, content: str) -> Tuple[str, bool]:
 def run_rag_chain(question: str, context_docs: List[Document]) -> str:
     """
     Generates an answer to a question based on a list of context documents.
+    Uses a map-reduce approach to handle large context, implemented manually
+    to align with modern LangChain practices.
 
     Args:
         question: The user's question.
@@ -255,18 +282,51 @@ def run_rag_chain(question: str, context_docs: List[Document]) -> str:
         A generated answer string.
     """
     llm = _get_llm()
-    
-    # Use our centralized RAG prompt
-    question_answer_chain = create_stuff_documents_chain(llm, RAG_PROMPT)
+
+    # Map Chain: This is run on each document individually.
+    # We are using the RAG_PROMPT here directly in the map step.
+    map_chain = LLMChain(llm=llm, prompt=RAG_PROMPT)
+
+    # Reduce Chain: This is run on the outputs of the map chain.
+    reduce_template = """The following is a set of answers to the question: {question}
+    ---
+    {doc_summaries}
+    ---
+    Based on these, provide a final, consolidated answer.
+    """
+    reduce_prompt = ChatPromptTemplate.from_template(reduce_template)
+    reduce_chain = LLMChain(llm=llm, prompt=reduce_prompt)
+
+    # Combine the outputs of the map step and pass to the reduce chain
+    combine_documents_chain = StuffDocumentsChain(
+        llm_chain=reduce_chain, document_variable_name="doc_summaries"
+    )
+
+    # The overall chain that combines map and reduce steps
+    reduce_documents_chain = ReduceDocumentsChain(
+        combine_documents_chain=combine_documents_chain,
+        collapse_documents_chain=combine_documents_chain,
+        token_max=4000,
+    )
+
+    map_reduce_chain = MapReduceDocumentsChain(
+        llm_chain=map_chain,
+        reduce_documents_chain=reduce_documents_chain,
+        document_variable_name="context",
+        return_intermediate_steps=False,
+    )
 
     logger.info("Running RAG chain", question=question, num_docs=len(context_docs))
     try:
-        response = question_answer_chain.invoke({
-            "question": question,
-            "context": context_docs
+        response = map_reduce_chain.invoke({
+            "input_documents": context_docs,
+            "question": question
         })
+        
+        answer = response.get("output_text", "No answer could be generated.")
+        
         logger.info("Successfully generated RAG answer.")
-        return response
+        return answer
     except Exception as e:
         logger.error("An error occurred during RAG chain execution", exc_info=True)
         raise RAGError(str(e)) from e

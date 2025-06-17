@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379"
     CACHE_EXPIRATION_SECONDS: int = 3600  # 1 hour
     
+    # Celery Configuration
+    CELERY_BROKER_URL: str = "redis://localhost:6379/0"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/0"
+    
     # Logging
     LOG_LEVEL: str = "INFO"
     ENVIRONMENT: str = "development"

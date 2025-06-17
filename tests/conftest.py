@@ -3,15 +3,23 @@ from fastapi.testclient import TestClient
 import fakeredis
 from unittest.mock import patch, MagicMock
 import os
+from dotenv import load_dotenv
 
-# Set test environment variables before any imports
+# Load .env file for testing environment
+load_dotenv()
+
+# Set test environment variables, prioritizing .env file over defaults
 os.environ.update({
+    "LLM_PROVIDER": os.getenv("LLM_PROVIDER", "gemini"),
+    "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY"),
+    "GOOGLE_APPLICATION_CREDENTIALS": os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
+    "GOOGLE_CLOUD_PROJECT": os.getenv("GOOGLE_CLOUD_PROJECT"),
+    
+    # Mock other credentials for tests that don't hit external services
     "TENANT_ID": "test_tenant",
     "CLIENT_ID": "test_client", 
     "CLIENT_SECRET": "test_secret",
     "TARGET_USER_ID": "test_user",
-    "OPENAI_API_KEY": "test_key",
-    "LLM_PROVIDER": "openai",
     "REDIS_URL": "redis://localhost:6379/0",
     "POSTGRES_USER": "test_user",
     "POSTGRES_PASSWORD": "test_password",
@@ -23,6 +31,7 @@ os.environ.update({
     "DB_NAME": "test_db",
     "DB_HOST": "localhost",
     "DB_PORT": "5433",
+    "USE_MOCK_GRAPH_API": "true", # Default to mock graph for most tests
 })
 
 # Mock the database engine before importing the app

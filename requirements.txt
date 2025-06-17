@@ -33,7 +33,7 @@ alembic
 redis
 
 # Document Processing
-unstructured
+unstructured[all-docs]
 python-multipart
 pypdf
 python-docx
@@ -64,4 +64,8 @@ pytest-asyncio
 pytest-mock
 
 # Production server (optional)
-gunicorn 
+gunicorn
+
+# Background Task Processing
+celery
+flower

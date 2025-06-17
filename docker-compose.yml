@@ -38,6 +38,60 @@ services:
     volumes:
       - ./logs:/app/logs
 
+  # The Celery worker service
+  celery-worker:
+    build: .
+    command: celery -A app.tasks.celery_app worker -l info
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - POSTGRES_SERVER=db
+      - DB_HOST=db
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    container_name: email_summarizer_celery_worker
+    volumes:
+      - ./logs:/app/logs
+      - ./:/app  # Mount current directory to allow for code changes without rebuilding
+
+  # The Celery beat service (for scheduled tasks)
+  celery-beat:
+    build: .
+    command: celery -A app.tasks.celery_app beat -l info
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - POSTGRES_SERVER=db
+      - DB_HOST=db
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    container_name: email_summarizer_celery_beat
+
+  # The Flower service for monitoring Celery
+  flower:
+    image: mher/flower
+    command: ["flower", "--broker=redis://redis:6379/0", "--port=5555"]
+    ports:
+      - "5556:5555" # Expose Flower UI on host port 5556
+    depends_on:
+      - redis
+    container_name: email_summarizer_flower
+    restart: unless-stopped
+
   # The Redis caching service
   redis:
     # Use a standard Redis image from Docker Hub
