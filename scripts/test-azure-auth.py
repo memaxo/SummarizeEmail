@@ -21,7 +21,7 @@ def test_azure_auth():
     
     # Check environment variables
     print("1. Checking environment variables...")
-    required_vars = ['TENANT_ID', 'CLIENT_ID', 'CLIENT_SECRET', 'TARGET_USER_ID']
+    required_vars = ['AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET', 'TARGET_USER_ID']
     missing_vars = []
     
     for var in required_vars:
@@ -32,7 +32,7 @@ def test_azure_auth():
             print(f"   ❌ {var}: Not configured")
         else:
             # Mask the secret for security
-            if var == 'CLIENT_SECRET':
+            if var == 'AZURE_CLIENT_SECRET':
                 print(f"   ✅ {var}: {'*' * 10}{value[-4:]}")
             else:
                 print(f"   ✅ {var}: {value}")
@@ -44,12 +44,12 @@ def test_azure_auth():
     
     # Test token acquisition
     print("\n2. Testing token acquisition...")
-    token_url = f"https://login.microsoftonline.com/{settings.TENANT_ID}/oauth2/v2.0/token"
+    token_url = f"https://login.microsoftonline.com/{settings.AZURE_TENANT_ID}/oauth2/v2.0/token"
     
     token_data = {
         'grant_type': 'client_credentials',
-        'client_id': settings.CLIENT_ID,
-        'client_secret': settings.CLIENT_SECRET,
+        'client_id': settings.AZURE_CLIENT_ID,
+        'client_secret': settings.AZURE_CLIENT_SECRET,
         'scope': 'https://graph.microsoft.com/.default'
     }
     
@@ -126,9 +126,9 @@ def test_azure_auth():
             print(f"   Description: {error_data.get('error_description', 'No description')}")
             
             if error_data.get('error') == 'invalid_client':
-                print("\n   💡 Hint: Check your CLIENT_ID and CLIENT_SECRET")
+                print("\n   💡 Hint: Check your AZURE_CLIENT_ID and AZURE_CLIENT_SECRET")
             elif error_data.get('error') == 'invalid_request':
-                print("\n   💡 Hint: Check your TENANT_ID")
+                print("\n   💡 Hint: Check your AZURE_TENANT_ID")
                 
             return False
             

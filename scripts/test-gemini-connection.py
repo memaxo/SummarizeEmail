@@ -68,29 +68,29 @@ def test_gemini_connection():
             model="gemini-2.0-flash-001",
             contents=prompt,
         )
-        
+            
         print(f"✅ Response received: {response.text}")
         
         # Test with structured output
-        print("\nTesting structured output...")
-        test_email = """
-        Subject: Project Update
-        From: john@example.com
-        
-        Hi team,
-        
-        The project is going well. We completed the API integration yesterday.
-        
-        Action items:
-        - Review the documentation by Friday
-        - Schedule a demo for next week
-        
-        Overall, I'm feeling positive about our progress.
-        
-        Best,
-        John
-        """
-        
+            print("\nTesting structured output...")
+                test_email = """
+                Subject: Project Update
+                From: john@example.com
+                
+                Hi team,
+                
+                The project is going well. We completed the API integration yesterday.
+                
+                Action items:
+                - Review the documentation by Friday
+                - Schedule a demo for next week
+                
+                Overall, I'm feeling positive about our progress.
+                
+                Best,
+                John
+                """
+                
         generate_content_config = types.GenerateContentConfig(
             temperature=0.7,
             max_output_tokens=1024,
@@ -128,7 +128,7 @@ def test_gemini_connection():
             config=generate_content_config,
         )
         
-        print("✅ Structured output received:")
+                print("✅ Structured output received:")
         print(f"   Response: {response.text}")
         
         return True

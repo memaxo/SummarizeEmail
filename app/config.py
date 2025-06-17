@@ -77,6 +77,9 @@ class Settings(BaseSettings):
     # Mock API Configuration (for testing)
     USE_MOCK_GRAPH_API: bool = False
     MOCK_GRAPH_API_URL: str = "http://localhost:8001"
+    
+    # RAG Configuration
+    RAG_INGESTION_INTERVAL_HOURS: int = 24  # How often to ingest emails for RAG
 
 
 @lru_cache()

@@ -60,9 +60,9 @@ def get_graph_token() -> str:
     # a persistent token cache (like Redis) would be needed.
     # See: https://msal-python.readthedocs.io/en/latest/#tokencache
     cca = msal.ConfidentialClientApplication(
-        settings.CLIENT_ID,
-        authority=f"https://login.microsoftonline.com/{settings.TENANT_ID}",
-        client_credential=settings.CLIENT_SECRET,
+        settings.AZURE_CLIENT_ID,
+        authority=f"https://login.microsoftonline.com/{settings.AZURE_TENANT_ID}",
+        client_credential=settings.AZURE_CLIENT_SECRET,
     )
 
     # The acquire_token_for_client call will first look for a valid token in the cache

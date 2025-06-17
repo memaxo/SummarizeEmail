@@ -50,7 +50,7 @@ class JWTValidator:
                 token,
                 signing_key.key,
                 algorithms=["RS256"],
-                audience=settings.CLIENT_ID,  # Your app's client ID
+                audience=settings.AZURE_CLIENT_ID,  # Your app's client ID
                 options={
                     "verify_signature": True,
                     "verify_exp": True,
