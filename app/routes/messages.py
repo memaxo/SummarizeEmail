@@ -3,6 +3,7 @@ from typing import List
 from fastapi import APIRouter, Path, Query, Request, HTTPException, Depends
 from redis.asyncio import Redis
 from sqlalchemy.orm import Session
+import structlog
 
 from .. import services
 from ..config import settings
@@ -12,11 +13,14 @@ from ..models import ErrorResponse, SummarizeResponse, SummaryResponse, Summary
 from ..database import get_db, get_redis
 from ..exceptions import EmailNotFoundError, SummarizationError
 from ..logger import logger
+from ..auth import get_current_user
 
 router = APIRouter(
     prefix="/messages",
     tags=["Messages"],
 )
+
+logger = structlog.get_logger(__name__)
 
 @router.get("/{msg_id}", response_model=Email)
 async def get_message(
@@ -36,89 +40,87 @@ async def get_message(
     
     return email_repo.get_message(msg_id)
 
-@router.post("/{msg_id}/summary", response_model=SummaryResponse)
+@router.post("/{message_id}/summary", response_model=SummaryResponse)
 async def summarize_message(
-    msg_id: str,
     request: Request,
-    include_attachments: bool = Query(False, description="Include attachment content in summary"),
-    redis: Redis = Depends(get_redis),
-    db: Session = Depends(get_db)
-) -> SummaryResponse:
+    message_id: str,
+    include_attachments: bool = Query(False, description="Include attachments in the summary"),
+    structured: bool = Query(False, description="Return structured output with key points and action items"),
+    _: str = Depends(get_current_user)
+):
     """
-    Generate a summary for a specific email message.
+    Summarize a specific email message.
     
     This endpoint:
-    1. Checks Redis cache for existing summary
-    2. If not cached, fetches the email content (optionally including attachments)
+    1. Fetches the email content from Microsoft Graph API
+    2. Optionally includes attachment content
     3. Generates a summary using the configured LLM
-    4. Caches the result in Redis
-    5. Stores the summary in PostgreSQL for analytics
+    4. Can return structured output with key points and action items
     
-    The summary is cached with a key format: summary:{msg_id}:{include_attachments}
+    Args:
+        message_id: The ID of the email message to summarize
+        include_attachments: Whether to include attachment content in the summary
+        structured: Whether to return structured output (only supported for OpenAI and Gemini)
+        
+    Returns:
+        SummaryResponse containing the summary and metadata
     """
-    # Generate cache key based on message ID and attachment inclusion
-    cache_key = f"summary:{msg_id}:{include_attachments}"
-    
-    # Check cache first
-    if redis:
-        cached_summary = await redis.get(cache_key)
-        if cached_summary:
-            logger.info("Cache hit for message summary", 
-                       message_id=msg_id, 
-                       include_attachments=include_attachments)
-            return SummaryResponse(
-                message_id=msg_id,
-                summary=cached_summary,
-                cached=True,
-                include_attachments=include_attachments
-            )
-    
     try:
-        # Fetch email content with optional attachments
-        # Pass the request object to extract user ID from OAuth token
-        content = await services.fetch_email_content(msg_id, request, include_attachments)
+        logger.info(f"Summarizing message: {message_id}", 
+                   include_attachments=include_attachments,
+                   structured=structured)
+        
+        # Fetch email content
+        content = await services.fetch_email_content(
+            message_id, 
+            request, 
+            include_attachments=include_attachments
+        )
         
         # Generate summary
-        summary = await services.summarize_email(content)
+        if structured and settings.LLM_PROVIDER in ["openai", "gemini"]:
+            # Get structured output
+            result = await services.summarize_email(content, structured=True)
+            if isinstance(result, EmailSummary):
+                # Convert structured output to response format
+                summary_text = result.summary
+                if result.key_points:
+                    summary_text += "\n\nKey Points:\n" + "\n".join(f"• {point}" for point in result.key_points)
+                if result.action_items:
+                    summary_text += "\n\nAction Items:\n" + "\n".join(f"• {item}" for item in result.action_items)
+                summary_text += f"\n\nSentiment: {result.sentiment}"
+                
+                return SummaryResponse(
+                    message_id=message_id,
+                    summary=summary_text,
+                    cached=False,
+                    llm_provider=settings.LLM_PROVIDER,
+                    structured_data={
+                        "key_points": result.key_points,
+                        "action_items": result.action_items,
+                        "sentiment": result.sentiment
+                    }
+                )
         
-        # Cache the summary
-        if redis:
-            await redis.setex(
-                cache_key,
-                settings.CACHE_EXPIRATION_SECONDS,
-                summary
-            )
-            logger.info("Cached message summary", 
-                       message_id=msg_id,
-                       include_attachments=include_attachments)
-        
-        # Store in database for analytics
-        db_summary = Summary(
-            message_id=msg_id,
-            summary=summary,
-            include_attachments=include_attachments
-        )
-        db.add(db_summary)
-        db.commit()
+        # Regular text summary or if structured output is not supported/requested
+        summary, cached = services.run_summarization_chain(request, content)
         
         return SummaryResponse(
-            message_id=msg_id,
+            message_id=message_id,
             summary=summary,
-            cached=False,
-            include_attachments=include_attachments
+            cached=cached,
+            llm_provider=settings.LLM_PROVIDER
         )
         
-    except EmailNotFoundError:
-        logger.warning("Email not found", message_id=msg_id)
-        raise HTTPException(status_code=404, detail=f"Email {msg_id} not found")
+    except EmailNotFoundError as e:
+        logger.error(f"Email not found: {message_id}")
+        raise HTTPException(status_code=404, detail=str(e))
     except SummarizationError as e:
-        logger.error("Summarization failed", message_id=msg_id, error=str(e))
-        raise HTTPException(status_code=500, detail="Failed to generate summary")
+        logger.error(f"Summarization failed for message {message_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to summarize email: {str(e)}")
     except Exception as e:
-        logger.error("Unexpected error during summarization", 
-                    message_id=msg_id, 
-                    error=str(e))
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.error(f"Unexpected error summarizing message {message_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred")
 
 @router.get("/{msg_id}/attachments", response_model=List[Attachment])
 async def list_attachments(

@@ -8,9 +8,10 @@ The architecture is built for speed and enterprise-readiness, using Microsoft Gr
 
 - **FastAPI Backend**: A robust, async-ready API built with Python and FastAPI.
 - **Microsoft Graph Integration**: Securely fetches email content using MSAL for app-only authentication with least-privilege (`Mail.Read`) permissions.
-- **Flexible LLM Support**: Switch between **OpenAI** (`gpt-4o-mini`, etc.) and self-hosted **Ollama** models (e.g., `llama3`) via a simple environment variable.
+- **Flexible LLM Support**: Switch between **Google Gemini** (default), **OpenAI** (`gpt-4o-mini`, etc.) and self-hosted **Ollama** models via a simple environment variable.
 - **Advanced Summarization**:
     - **Single Email**: Get a quick summary for any specific email.
+    - **Structured Output**: Extract key points, action items, and sentiment (Gemini/OpenAI only).
     - **Bulk Digest**: Generate a single "digest" summary from a list of emails.
     - **Daily Digest**: Automatically get a summary of all emails from the last 24 hours.
 - **Powerful Email Search & Retrieval**:
@@ -43,7 +44,7 @@ The architecture is built for speed and enterprise-readiness, using Microsoft Gr
 │ (Defines Action)  │             │           ▼                └──────────────┘
 └───────────────────┘      ┌──────────┴─────────┐      ┌──────────────────────────┐
                          │   LLM Provider   │      │      Redis Cache       │
-                         │ (OpenAI or Ollama) │<────>│ (For storing summaries)  │
+                         │(Gemini/OpenAI/Ollama)│<────>│ (For storing summaries)  │
                          └──────────────────┘      └──────────────────────────┘
 ```
 
@@ -53,7 +54,7 @@ The architecture is built for speed and enterprise-readiness, using Microsoft Gr
 4.  It first checks Redis for a cached summary. If found, it's returned immediately.
 5.  If not cached, it acquires an auth token and uses the Microsoft Graph API to securely fetch the email content for the configured user.
 6.  The email content is passed to a LangChain summarization chain.
-7.  The chain uses the configured LLM (OpenAI or Ollama) to generate a summary.
+7.  The chain uses the configured LLM (Gemini, OpenAI or Ollama) to generate a summary.
 8.  The summary is stored in Redis for future requests and returned to the GPT.
 
 ---
@@ -102,7 +103,7 @@ Create a `.env` file in the project root. You can copy the template:
 cp .env.example .env
 ```
 
-Now, open the `.env` file and fill in the values you gathered in Step 1, along with your OpenAI API key and database settings.
+Now, open the `.env` file and fill in the values you gathered in Step 1, along with your LLM provider credentials and database settings.
 
 ```ini
 # .env
@@ -111,8 +112,21 @@ CLIENT_ID="COPIED_FROM_AZURE"
 CLIENT_SECRET="COPIED_FROM_AZURE"
 TARGET_USER_ID="COPIED_FROM_AZURE"
 
-LLM_PROVIDER="openai" # or "ollama"
-OPENAI_API_KEY="sk-YOUR_OPENAI_KEY"
+# LLM Provider Configuration
+LLM_PROVIDER="gemini" # Options: "gemini" (default), "openai", or "ollama"
+
+# For Google Gemini (default)
+GOOGLE_API_KEY="your-google-api-key"
+GEMINI_MODEL_NAME="gemini-2.5-flash"
+
+# For OpenAI (alternative)
+# OPENAI_API_KEY="sk-YOUR_OPENAI_KEY"
+# OPENAI_MODEL_NAME="gpt-4o-mini"
+
+# For Ollama (self-hosted)
+# OLLAMA_BASE_URL="http://localhost:11434"
+# OLLAMA_MODEL="llama2"
+
 #
 # PostgreSQL Database Settings
 # These credentials are used by the FastAPI service to connect to the PostgreSQL

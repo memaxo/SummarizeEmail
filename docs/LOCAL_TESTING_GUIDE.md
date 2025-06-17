@@ -6,8 +6,12 @@ This guide helps you test the Email Summarizer API locally without Azure credent
 
 1. **Set up your environment:**
    ```bash
-   # Make sure you have your OpenAI API key
-   export OPENAI_API_KEY="your-key-here"
+   # Choose your LLM provider (Gemini is default)
+   # For Google Gemini (recommended):
+   export GOOGLE_API_KEY="your-google-api-key-here"
+   
+   # OR for OpenAI:
+   export OPENAI_API_KEY="your-openai-api-key-here"
    
    # Run the setup script
    ./scripts/local-test-setup.sh
@@ -24,6 +28,26 @@ This guide helps you test the Email Summarizer API locally without Azure credent
    - Start the Email Summarizer API (port 8000)
    - Run automated tests
    - Keep services running for manual testing
+
+## LLM Provider Configuration
+
+The app supports multiple LLM providers:
+
+### Google Gemini (Default)
+```bash
+# In .env file:
+LLM_PROVIDER=gemini
+GOOGLE_API_KEY=your-google-api-key-here
+GEMINI_MODEL_NAME=gemini-2.5-flash  # Uses the latest Gemini 2.5 Flash model
+```
+
+### OpenAI
+```bash
+# In .env file:
+LLM_PROVIDER=openai
+OPENAI_API_KEY=your-openai-api-key-here
+OPENAI_MODEL_NAME=gpt-4o-mini
+```
 
 ## Testing Options
 
@@ -42,8 +66,11 @@ curl -H "Authorization: Bearer test-token" \
 # Search emails via our API
 curl "http://localhost:8000/emails/search?query=budget" | jq
 
-# Summarize an email
+# Summarize an email (basic)
 curl -X POST http://localhost:8000/messages/msg001/summary | jq
+
+# Summarize with structured output (Gemini/OpenAI only)
+curl -X POST "http://localhost:8000/messages/msg001/summary?structured=true" | jq
 
 # Bulk summarization
 curl -X POST http://localhost:8000/summaries/bulk \
@@ -96,8 +123,9 @@ The Mock Graph API generates realistic email data including:
 ### Basic Functionality
 1. **Email Search**: Test searching with different queries
 2. **Single Summarization**: Summarize individual emails
-3. **Bulk Summarization**: Summarize multiple emails at once
-4. **RAG Queries**: Ask questions about your email content
+3. **Structured Summarization**: Get key points and action items (Gemini/OpenAI only)
+4. **Bulk Summarization**: Summarize multiple emails at once
+5. **RAG Queries**: Ask questions about your email content
 
 ### Performance Testing
 1. **Caching**: Verify Redis caching improves response times

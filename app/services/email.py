@@ -1,36 +1,56 @@
 import structlog
-from typing import List, Tuple, Dict, Any, Optional
+from typing import List, Tuple, Dict, Any, Optional, Union
 
 import requests
 from langchain_community.chat_models import ChatOllama
 from langchain_core.documents import Document
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_google_vertexai import ChatVertexAI
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain.chains.summarize import load_summarize_chain
 from langchain_core.prompts import ChatPromptTemplate
 from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_core.output_parsers import StrOutputParser
+from pydantic import BaseModel, Field
 from fastapi import Request
 import hashlib
 import jwt
 import os
 import httpx
 
-from ..auth import get_graph_token, get_access_token
+from ..auth import get_graph_token
 from ..config import settings
 from ..exceptions import EmailNotFoundError, GraphApiError, SummarizationError, RAGError
 from ..graph.email_repository import EmailRepository
 from ..graph.models import Email
 from .document_parser import document_parser
+from ..prompts import (
+    SIMPLE_SUMMARY_PROMPT, 
+    STRUCTURED_SUMMARY_PROMPT,
+    MAP_PROMPT,
+    REDUCE_PROMPT,
+    RAG_PROMPT
+)
 from app.logger import logger
 
 logger = structlog.get_logger(__name__)
 
 
+# Pydantic models for structured output
+class EmailSummary(BaseModel):
+    """Structured email summary output"""
+    summary: str = Field(description="A concise summary of the email content")
+    key_points: List[str] = Field(description="List of key points from the email")
+    action_items: List[str] = Field(description="List of action items mentioned in the email", default_factory=list)
+    sentiment: str = Field(description="Overall sentiment: positive, negative, or neutral")
+
+
 def _get_llm() -> BaseChatModel:
     """
     Factory function to get the appropriate LLM client based on settings.
-    This allows for easy swapping between OpenAI and a self-hosted Ollama model.
+    This allows for easy swapping between OpenAI, Gemini, and Ollama models.
     """
     provider = settings.LLM_PROVIDER.lower()
     logger.info(f"Initializing LLM for provider: {provider}")
@@ -41,6 +61,38 @@ def _get_llm() -> BaseChatModel:
             model_name=settings.OPENAI_MODEL_NAME,
             api_key=settings.OPENAI_API_KEY,
         )
+    elif provider == "gemini":
+        # Check if we should use Vertex AI (service account) or Google AI (API key)
+        if settings.GOOGLE_APPLICATION_CREDENTIALS and settings.GOOGLE_CLOUD_PROJECT:
+            # Use Vertex AI with service account
+            logger.info("Using Vertex AI with service account authentication")
+            
+            # Set the environment variable for Google Cloud authentication
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.GOOGLE_APPLICATION_CREDENTIALS
+            
+            # Initialize Vertex AI
+            import vertexai
+            vertexai.init(
+                project=settings.GOOGLE_CLOUD_PROJECT,
+                location=settings.GOOGLE_CLOUD_LOCATION
+            )
+            
+            return ChatVertexAI(
+                model_name=f"google/{settings.GEMINI_MODEL_NAME}" if not settings.GEMINI_MODEL_NAME.startswith("google/") else settings.GEMINI_MODEL_NAME,
+                temperature=0,
+                project=settings.GOOGLE_CLOUD_PROJECT,
+                location=settings.GOOGLE_CLOUD_LOCATION,
+                convert_system_message_to_human=True,  # Gemini doesn't support system messages directly
+            )
+        else:
+            # Use Google AI with API key
+            logger.info("Using Google AI with API key authentication")
+            return ChatGoogleGenerativeAI(
+                model=settings.GEMINI_MODEL_NAME.replace("google/", ""),  # Remove prefix for Google AI
+                temperature=0,
+                google_api_key=settings.GOOGLE_API_KEY,
+                convert_system_message_to_human=True,  # Gemini doesn't support system messages directly
+            )
     elif provider == "ollama":
         return ChatOllama(
             base_url=settings.OLLAMA_BASE_URL,
@@ -126,29 +178,37 @@ async def fetch_email_content(
         raise EmailNotFoundError(f"Email not found: {msg_id}") from e
 
 
-async def summarize_email(content: str) -> str:
+async def summarize_email(content: str, structured: bool = False) -> Union[str, EmailSummary]:
     """
     Generate a summary for email content using the configured LLM.
     
     Args:
         content: The email content to summarize
+        structured: If True, returns structured output with key points and action items
         
     Returns:
-        The generated summary
+        The generated summary (string or EmailSummary object)
     """
     llm = _get_llm()
     
-    # Create a simple summarization prompt
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a helpful assistant that summarizes emails concisely."),
-        ("user", "Please summarize the following email:\n\n{text}")
-    ])
+    if structured and settings.LLM_PROVIDER in ["openai", "gemini"]:
+        # Use structured output for supported providers
+        # Create structured output chain
+        structured_llm = llm.with_structured_output(EmailSummary)
+        chain = STRUCTURED_SUMMARY_PROMPT | structured_llm
+        
+        try:
+            result = chain.invoke({"text": content})
+            return result
+        except Exception as e:
+            logger.warning(f"Structured output failed, falling back to text: {e}")
+            # Fall back to regular text output
     
-    # Create and run the chain
-    chain = prompt | llm
+    # Regular text summarization
+    chain = SIMPLE_SUMMARY_PROMPT | llm | StrOutputParser()
     response = chain.invoke({"text": content})
     
-    return response.content
+    return response
 
 
 def run_summarization_chain(request: Request, content: str) -> Tuple[str, bool]:
@@ -171,7 +231,14 @@ def run_summarization_chain(request: Request, content: str) -> Tuple[str, bool]:
     docs = [Document(page_content=content)]
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=4000, chunk_overlap=200)
     split_docs = text_splitter.split_documents(docs)
-    chain = load_summarize_chain(llm, chain_type="map_reduce")
+    
+    # Use our centralized prompts
+    chain = load_summarize_chain(
+        llm, 
+        chain_type="map_reduce",
+        map_prompt=MAP_PROMPT,
+        combine_prompt=REDUCE_PROMPT
+    )
 
     logger.info(f"Running summarization chain with {len(split_docs)} documents...")
     try:
@@ -202,25 +269,8 @@ def run_rag_chain(question: str, context_docs: List[Document]) -> str:
     """
     llm = _get_llm()
     
-    # This prompt instructs the LLM to answer the user's question *only* based
-    # on the provided context documents. This is a crucial part of RAG.
-    template = """
-    You are an assistant for question-answering tasks. 
-    Use the following pieces of retrieved context to answer the question. 
-    If you don't know the answer, just say that you don't know. 
-    Use three sentences maximum and keep the answer concise.
-
-    Question: {question} 
-
-    Context: {context} 
-
-    Answer:
-    """
-    prompt = ChatPromptTemplate.from_template(template)
-
-    # This chain "stuffs" all the documents into the {context} part of the prompt
-    # and sends it to the LLM.
-    question_answer_chain = create_stuff_documents_chain(llm, prompt)
+    # Use our centralized RAG prompt
+    question_answer_chain = create_stuff_documents_chain(llm, RAG_PROMPT)
 
     logger.info("Running RAG chain", question=question, num_docs=len(context_docs))
     try:
@@ -268,7 +318,7 @@ class EmailService:
             # Use a test token for mock API
             return {"Authorization": "Bearer test-token"}
         else:
-            token = await get_access_token()
+            token = await get_graph_token()
             return {"Authorization": f"Bearer {token}"}
     
     async def search_emails(

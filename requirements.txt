@@ -1,41 +1,67 @@
-# LangChain and related dependencies
+# Core Framework
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+
+# Microsoft Graph API
+msal
+requests
+httpx
+
+# LangChain and LLM providers
 langchain
 langchain-community
 langchain-core
-langchain-openai
 langchain-text-splitters
+langchain-openai
+langchain-google-genai
+langchain-google-vertexai
+openai
+google-cloud-aiplatform
+google-auth
+vertexai
 
 # Database
 psycopg2-binary
-pgvector==0.4.1
+pgvector
 sqlalchemy
+asyncpg
+alembic
 
-# FastAPI and web server
-fastapi
-uvicorn
+# Redis for caching
+redis
 
-# Microsoft Graph and Auth
-requests
-msal
-PyJWT[crypto]==2.8.0
+# Document Processing
+unstructured
+python-multipart
+pypdf
+python-docx
+openpyxl
+python-pptx
+pillow
+python-magic
+lxml
+
+# Authentication
+PyJWT[crypto]
+python-jose[cryptography]
+passlib[bcrypt]
+
+# API Features
+slowapi
+prometheus-fastapi-instrumentator
+apscheduler
 
 # Utilities
 python-dotenv
 structlog
-redis
-slowapi
+colorlog
 
-# Monitoring
-prometheus-fastapi-instrumentator
+# Testing (optional, but included for development)
+pytest
+pytest-asyncio
+pytest-mock
 
-# Scheduling
-apscheduler
-
-# Document Parsing
-unstructured[all-docs]
-python-magic
-lxml
-python-docx
-pypdf
-
-# Development dependencies are in requirements-dev.txt 
+# Production server (optional)
+gunicorn 

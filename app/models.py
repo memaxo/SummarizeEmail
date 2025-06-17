@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 from pydantic import BaseModel, Field
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text
@@ -16,6 +16,8 @@ class SummarizeResponse(BaseModel):
     message_id: str = Field(..., description="The ID of the email that was summarized.")
     cached: bool = Field(..., description="Indicates if the response was served from the cache.")
     llm_provider: str = Field(..., description="The LLM provider used for the summary ('openai' or 'ollama').")
+    include_attachments: bool = Field(False, description="Whether attachments were included in the summary.")
+    timestamp: datetime = Field(default_factory=datetime.utcnow, description="When the summary was generated.")
 
 
 class SummaryResponse(BaseModel):
@@ -26,6 +28,8 @@ class SummaryResponse(BaseModel):
     message_id: str = Field(..., description="The ID of the email that was summarized.")
     cached: bool = Field(..., description="Indicates if the response was served from the cache.")
     include_attachments: bool = Field(..., description="Whether attachments were included in the summary.")
+    llm_provider: str = Field(..., description="The LLM provider used for the summary.")
+    structured_data: Optional[Dict[str, Any]] = Field(None, description="Structured data (key points, action items, sentiment) if requested")
 
 
 class ErrorResponse(BaseModel):
@@ -33,6 +37,8 @@ class ErrorResponse(BaseModel):
     Defines the structure for error responses.
     """
     detail: str = Field(..., description="A clear, human-readable error message.")
+    status_code: int = Field(..., description="HTTP status code")
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
 class SummarizeBulkRequest(BaseModel):
@@ -40,6 +46,7 @@ class SummarizeBulkRequest(BaseModel):
     Defines the request for the bulk summarization endpoint.
     """
     message_ids: List[str] = Field(..., description="A list of email message IDs to summarize.", min_items=1)
+    include_attachments: bool = Field(False, description="Whether to include attachments in summaries")
 
 
 class BulkSummarizeRequest(BaseModel):
@@ -47,6 +54,7 @@ class BulkSummarizeRequest(BaseModel):
     Request model for bulk email summarization.
     """
     message_ids: List[str] = Field(..., description="A list of email message IDs to summarize.", min_items=1)
+    include_attachments: bool = Field(False, description="Whether to include attachments in the summaries.")
 
 
 class BulkSummarizeResponse(BaseModel):
@@ -54,6 +62,8 @@ class BulkSummarizeResponse(BaseModel):
     Response model for bulk email summarization.
     """
     summaries: List[SummaryResponse] = Field(..., description="List of individual email summaries.")
+    total: int = Field(..., description="Total number of messages summarized.")
+    failed: List[str] = Field(default_factory=list, description="List of message IDs that failed to summarize.")
 
 
 class SummarizeDigestResponse(BaseModel):
