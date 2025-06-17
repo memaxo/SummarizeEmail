@@ -1,0 +1,6 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+Use "uv pip" for any pip related commands like "uv pip install ..." 

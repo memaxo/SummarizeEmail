@@ -1,0 +1,6 @@
+---
+description: 
+globs: *requirements*
+alwaysApply: false
+---
+Don't hardcode/pin versions unless you are certain

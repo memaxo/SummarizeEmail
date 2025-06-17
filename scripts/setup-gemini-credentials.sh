@@ -27,7 +27,7 @@ else
 fi
 
 # Extract project ID from the credentials file
-PROJECT_ID=$(grep -o '"project_id"[[:space:]]*:[[:space:]]*"[^"]*"' "$CRED_FILE" | sed 's/.*: *"\([^"]*\)".*/\1/')
+PROJECT_ID=$(grep -o '"project_id"[[:space:]]*:[[:space:]]*"[^"]*"' "$CRED_FILE" | sed 's/.*:[[:space:]]*"\([^"]*\)".*/\1/')
 
 if [ -z "$PROJECT_ID" ]; then
     echo "❌ Could not extract project ID from credentials file"
@@ -53,6 +53,7 @@ if [ -f .env ]; then
         # Update existing values
         sed -i.tmp "s|GOOGLE_APPLICATION_CREDENTIALS=.*|GOOGLE_APPLICATION_CREDENTIALS=$CRED_FILE|" .env
         sed -i.tmp "s|GOOGLE_CLOUD_PROJECT=.*|GOOGLE_CLOUD_PROJECT=$PROJECT_ID|" .env
+        sed -i.tmp "s|GOOGLE_CLOUD_LOCATION=.*|GOOGLE_CLOUD_LOCATION=us-west1|" .env
         rm -f .env.tmp
         echo "✅ Updated existing Gemini configuration in .env"
     else
@@ -62,7 +63,7 @@ if [ -f .env ]; then
 # Google Cloud Service Account Configuration
 GOOGLE_APPLICATION_CREDENTIALS=$CRED_FILE
 GOOGLE_CLOUD_PROJECT=$PROJECT_ID
-GOOGLE_CLOUD_LOCATION=us-central1
+GOOGLE_CLOUD_LOCATION=us-west1
 GEMINI_MODEL_NAME=gemini-2.5-flash
 EOF
         echo "✅ Added Gemini configuration to .env"
@@ -82,8 +83,9 @@ LLM_PROVIDER=gemini
 # Google Cloud Service Account Configuration
 GOOGLE_APPLICATION_CREDENTIALS=$CRED_FILE
 GOOGLE_CLOUD_PROJECT=$PROJECT_ID
-GOOGLE_CLOUD_LOCATION=us-central1
+GOOGLE_CLOUD_LOCATION=us-west1
 GEMINI_MODEL_NAME=gemini-2.5-flash
+
 
 # Local testing mode
 USE_MOCK_GRAPH_API=true
@@ -108,6 +110,7 @@ echo "=== Configuration Complete ==="
 echo ""
 echo "Your app is now configured to use Gemini via Vertex AI with:"
 echo "- Project: $PROJECT_ID"
+echo "- Location: us-west1 (matching your test script)"
 echo "- Credentials: $CRED_FILE"
 echo "- Model: gemini-2.5-flash"
 echo ""
