@@ -75,9 +75,8 @@ source .venv/bin/activate
 # Install dependencies
 echo ""
 echo "Installing Python dependencies..."
-pip install -q --upgrade pip
-pip install -q -r requirements.txt
-pip install -q -r requirements-dev.txt
+# Ensure we use the workspace-configured package installer
+uv pip install -r requirements.txt
 echo "✅ Dependencies installed"
 
 # Initialize the database

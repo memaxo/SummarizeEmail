@@ -53,6 +53,11 @@ def get_graph_token() -> str:
     Raises:
         GraphApiError: If the token acquisition fails.
     """
+    # Return mock token for testing
+    if settings.USE_MOCK_GRAPH_API:
+        logger.info("Using mock Graph API token")
+        return "mock-token-for-testing"
+    
     logger.info("Acquiring Microsoft Graph API token...")
     # We create a new ConfidentialClientApplication each time, but MSAL's
     # internal token cache (in-memory by default) is keyed by client_id, authority, etc.

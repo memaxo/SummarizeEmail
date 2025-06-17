@@ -78,11 +78,10 @@ def _get_llm() -> BaseChatModel:
             )
             
             return ChatVertexAI(
-                model_name=f"google/{settings.GEMINI_MODEL_NAME}" if not settings.GEMINI_MODEL_NAME.startswith("google/") else settings.GEMINI_MODEL_NAME,
-                temperature=0,
+                model_name=settings.GEMINI_MODEL_NAME,
                 project=settings.GOOGLE_CLOUD_PROJECT,
                 location=settings.GOOGLE_CLOUD_LOCATION,
-                convert_system_message_to_human=True,  # Gemini doesn't support system messages directly
+                convert_system_message_to_human=True,
             )
         else:
             # Use Google AI with API key
@@ -141,32 +140,21 @@ async def fetch_email_content(
     request: Request,
     include_attachments: bool = False
 ) -> str:
-    """Fetch email content from Microsoft Graph API.
-    
-    In production, uses the user ID from the OAuth token.
-    In development, falls back to TARGET_USER_ID.
-    """
-    # Get user ID from token in production, or from env in development
-    user_id = await get_user_id_from_token(request)
-    
+    """Fetch email content from the repository, respecting mock mode."""
     try:
-        # Create a repository instance for this specific user
-        email_repo = EmailRepository(user_id=user_id)
-        # Get the email using the dynamic user ID
-        email = email_repo.get_message(msg_id)
+        # The email_repository is now a singleton that respects mock mode
+        from ..graph import email_repository
         
+        email = email_repository.get_message(msg_id)
         content = email.get_full_content()
 
         if include_attachments:
             logger.info("Fetching attachments for email", message_id=msg_id)
-            attachments = email_repo.list_attachments(msg_id)
+            attachments = email_repository.list_attachments(msg_id)
             
             for attachment_meta in attachments:
                 logger.info("Parsing attachment", attachment_id=attachment_meta.id)
-                # Fetch the full attachment with its content bytes
-                full_attachment = email_repo.get_attachment(msg_id, attachment_meta.id)
-                
-                # Parse the content using our service
+                full_attachment = email_repository.get_attachment(msg_id, attachment_meta.id)
                 attachment_text = document_parser.parse_content(full_attachment.contentBytes)
                 
                 if attachment_text:
@@ -174,8 +162,9 @@ async def fetch_email_content(
 
         return content
     except Exception as e:
-        logger.error(f"Error fetching email content: {e}")
-        raise EmailNotFoundError(f"Email not found: {msg_id}") from e
+        logger.error(f"Error fetching email content: {e}", exc_info=True)
+        # Re-raise as a standard exception type for the route handler
+        raise EmailNotFoundError(f"Email not found or could not be processed: {msg_id}") from e
 
 
 async def summarize_email(content: str, structured: bool = False) -> Union[str, EmailSummary]:

@@ -4,7 +4,7 @@ from typing import List
 import structlog
 
 from ..db.session import get_db
-from ..graph.email_repository import EmailRepository
+from ..graph import email_repository
 from ..rag.vector_db_repository import VectorDBRepository
 from ..models import ErrorResponse, RAGQueryResponse, RAGAnswerResponse
 from ..rag.models import EmailEmbedding as RAGEmail
@@ -31,9 +31,8 @@ async def ingest_emails_task(db: Session, query: str, user_id: str, request: Req
     """
     logger.info("Starting RAG ingestion task", query=query, user_id=user_id)
     
-    # Create a repository instance for this specific user
-    email_repo = EmailRepository(user_id=user_id)
-    emails = email_repo.list_messages(search=query, top=100)  # Ingest up to 100 emails
+    # Use the imported email_repository which respects mock mode
+    emails = email_repository.list_messages(search=query, top=100)  # Ingest up to 100 emails
     
     # Create a new list of emails with attachment content included
     enriched_emails = []

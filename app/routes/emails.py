@@ -3,7 +3,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Query, Request
 
-from ..graph.email_repository import EmailRepository
+from ..graph import email_repository
 from ..graph.models import Email
 from ..services.email import get_user_id_from_token
 
@@ -31,10 +31,8 @@ async def search_emails(
     # Get user ID from OAuth token or fall back to TARGET_USER_ID
     user_id = await get_user_id_from_token(request)
     
-    # Create a repository instance for this specific user
-    email_repo = EmailRepository(user_id=user_id)
-    
-    emails = email_repo.list_messages(
+    # Use the imported email_repository which respects mock mode
+    emails = email_repository.list_messages(
         search=search,
         from_address=from_address,
         subject_contains=subject_contains,
