@@ -140,7 +140,7 @@ def test_get_message(client, mocker):
         toRecipients=[],
         sentDateTime="-"
     )
-    mocker.patch("app.routes.messages.email_repository.get_message", return_value=mock_email)
+    mocker.patch("app.routes.messages.EmailRepository.get_message", return_value=mock_email)
     
     response = client.get(f"/messages/{message_id}")
     
@@ -152,7 +152,7 @@ def test_list_attachments(client, mocker):
     """Tests listing attachments for a message."""
     message_id = "test_id"
     mock_attachments = [Attachment(id="att1", name="test.txt", contentType="text/plain", size=123, isInline=False)]
-    mocker.patch("app.routes.messages.email_repository.list_attachments", return_value=mock_attachments)
+    mocker.patch("app.routes.messages.EmailRepository.list_attachments", return_value=mock_attachments)
     
     response = client.get(f"/messages/{message_id}/attachments")
 
@@ -173,7 +173,7 @@ def test_get_single_attachment(client, mocker):
         isInline=False,
         contentBytes="dGVzdA==" # "test" in base64
     )
-    mocker.patch("app.routes.messages.email_repository.get_attachment", return_value=mock_attachment)
+    mocker.patch("app.routes.messages.EmailRepository.get_attachment", return_value=mock_attachment)
     
     response = client.get(f"/messages/{message_id}/attachments/{attachment_id}")
     

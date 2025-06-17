@@ -37,7 +37,7 @@ def test_ingest_emails_task_logic(mocker):
     """
     # 1. Mock the dependencies of the task function
     mock_db_session = MagicMock()
-    mock_email_repo = mocker.patch("app.routes.rag.email_repository")
+    mock_email_repo = mocker.patch("app.routes.rag.EmailRepository")
     mock_vector_repo_instance = MagicMock()
     mocker.patch("app.routes.rag.VectorDBRepository", return_value=mock_vector_repo_instance)
     mock_fetch_content = mocker.patch("app.routes.rag.fetch_email_content")

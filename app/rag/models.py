@@ -14,4 +14,5 @@ class EmailEmbedding(Base):
     subject = Column(String)
     content = Column(Text)
     sent_date_time = Column(DateTime)
-    embedding = Column(Vector(1536)) # Assuming OpenAI's text-embedding-3-small 
+    embedding = Column(Vector(1536)) # Assuming OpenAI's text-embedding-3-small
+    user_id = Column(String, index=True)  # For multi-tenant support 

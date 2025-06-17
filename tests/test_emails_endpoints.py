@@ -10,9 +10,15 @@ def test_search_emails_no_filters(client, mocker):
     """
     Tests the GET /emails endpoint with no filters, expecting a default call.
     """
+    # Mock the user ID extraction
+    mocker.patch(
+        "app.routes.emails.get_user_id_from_token",
+        return_value="test_user"
+    )
+    
     # 1. Mock the repository layer
     mock_list_messages = mocker.patch(
-        "app.routes.emails.email_repository.list_messages",
+        "app.routes.emails.EmailRepository.list_messages",
         return_value=[]
     )
 
@@ -38,7 +44,7 @@ def test_search_emails_with_filters(client, mocker):
     """
     # 1. Mock the repository layer
     mock_list_messages = mocker.patch(
-        "app.routes.emails.email_repository.list_messages",
+        "app.routes.emails.EmailRepository.list_messages",
         return_value=[
             Email(id="id1", subject="Test", body=EmailBody(content="c", contentType="t"), from_address={"emailAddress":{}}, toRecipients=[], sentDateTime="-")
         ]

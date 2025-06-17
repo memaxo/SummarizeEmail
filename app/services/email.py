@@ -17,7 +17,7 @@ import jwt
 from ..auth import get_graph_token
 from ..config import settings
 from ..exceptions import EmailNotFoundError, GraphApiError, SummarizationError, RAGError
-from ..graph.email_repository import email_repository
+from ..graph.email_repository import EmailRepository
 from ..graph.models import Email
 from .document_parser import document_parser
 
@@ -121,6 +121,31 @@ async def fetch_email_content(
     except Exception as e:
         logger.error(f"Error fetching email content: {e}")
         raise EmailNotFoundError(f"Email not found: {msg_id}") from e
+
+
+async def summarize_email(content: str) -> str:
+    """
+    Generate a summary for email content using the configured LLM.
+    
+    Args:
+        content: The email content to summarize
+        
+    Returns:
+        The generated summary
+    """
+    llm = _get_llm()
+    
+    # Create a simple summarization prompt
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "You are a helpful assistant that summarizes emails concisely."),
+        ("user", "Please summarize the following email:\n\n{text}")
+    ])
+    
+    # Create and run the chain
+    chain = prompt | llm
+    response = chain.invoke({"text": content})
+    
+    return response.content
 
 
 def run_summarization_chain(request: Request, content: str) -> Tuple[str, bool]:

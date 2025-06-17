@@ -17,7 +17,7 @@ def test_summarize_bulk(client, mocker):
     expected_digest = "This is a digest of two emails."
 
     mocker.patch(
-        "app.routes.summaries.email_repository.get_message",
+        "app.routes.summaries.EmailRepository.get_message",
         return_value=Email(id="id", subject="s", body=EmailBody(content="c", contentType="t"), from_address={"emailAddress":{"address":"test@test.com"}}, toRecipients=[], sentDateTime="-")
     )
     mocker.patch(
@@ -42,7 +42,7 @@ def test_summarize_daily_digest(client, mocker):
     expected_digest = "This is the daily digest."
     
     mocker.patch(
-        "app.routes.summaries.email_repository.list_messages",
+        "app.routes.summaries.EmailRepository.list_messages",
         return_value=[Email(id="id", subject="s", body=EmailBody(content="c", contentType="t"), from_address={"emailAddress":{"address":"test@test.com"}}, toRecipients=[], sentDateTime="-")]
     )
     mocker.patch(
@@ -64,7 +64,7 @@ def test_summarize_daily_digest_no_emails(client, mocker):
     """
     # 1. Mock the repository to return an empty list
     mocker.patch(
-        "app.routes.summaries.email_repository.list_messages",
+        "app.routes.summaries.EmailRepository.list_messages",
         return_value=[]
     )
     mocker.patch(
