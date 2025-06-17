@@ -5,7 +5,8 @@ from fastapi import APIRouter, Request
 
 from .. import services
 from ..graph import graph_repo
-from ..models import BulkSummarizeRequest, BulkSummarizeResponse, SummarizeResponse
+from ..models import BulkSummarizeRequest, BulkSummarizeResponse, SummaryResponse
+from ..config import settings
 
 router = APIRouter(
     prefix="/summaries",
@@ -31,15 +32,17 @@ async def bulk_summarize(
     
     for email in emails:
         content = email.get_full_content()
-        summary = await services.summarize_email(content)
-        summaries.append(SummarizeResponse(
-            summary=summary,
+        summary_text = await services.summarize_email(content)
+        summary_response = SummaryResponse(
+            summary=summary_text,
             message_id=email.id,
-            cached=False,
-            include_attachments=False
-        ))
+            cached=False, # This endpoint doesn't use caching directly
+            llm_provider=settings.LLM_PROVIDER,
+            include_attachments=request.include_attachments
+        )
+        summaries.append(summary_response)
     
-    return BulkSummarizeResponse(summaries=summaries)
+    return BulkSummarizeResponse(summaries=summaries, total=len(summaries))
 
 @router.post("/daily", response_model=BulkSummarizeResponse)
 async def daily_summary(http_request: Request):
@@ -61,12 +64,14 @@ async def daily_summary(http_request: Request):
     
     for email in emails:
         content = email.get_full_content()
-        summary = await services.summarize_email(content)
-        summaries.append(SummarizeResponse(
-            summary=summary,
+        summary_text = await services.summarize_email(content)
+        summary_response = SummaryResponse(
+            summary=summary_text,
             message_id=email.id,
             cached=False,
-            include_attachments=False
-        ))
+            llm_provider=settings.LLM_PROVIDER,
+            include_attachments=False # Daily summary does not include attachments
+        )
+        summaries.append(summary_response)
     
-    return BulkSummarizeResponse(summaries=summaries) 
+    return BulkSummarizeResponse(summaries=summaries, total=len(summaries)) 

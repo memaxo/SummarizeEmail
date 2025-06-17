@@ -108,6 +108,7 @@ async def summarize_message(
             message_id=message_id,
             summary=summary,
             cached=cached,
+            include_attachments=include_attachments,
             llm_provider=settings.LLM_PROVIDER
         )
         
