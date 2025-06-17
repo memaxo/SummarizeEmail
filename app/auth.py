@@ -1,12 +1,42 @@
 import logging
+from typing import Optional
 
 import msal
+from fastapi import Depends, HTTPException, Security
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from .config import settings
 from .exceptions import GraphApiError
 
 # Set up a logger for the auth module
 logger = logging.getLogger(__name__)
+
+# Security scheme for FastAPI
+security = HTTPBearer(auto_error=False)
+
+
+async def get_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(security)
+) -> str:
+    """
+    Get the current user ID from the request.
+    
+    For local testing, this returns a mock user ID.
+    In production, this would validate the OAuth token and extract the user ID.
+    
+    Returns:
+        str: The user ID (email or unique identifier)
+    """
+    if settings.USE_MOCK_GRAPH_API:
+        # For local testing, return a mock user
+        return "testuser@company.com"
+    
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    # In production, you would validate the token here
+    # For now, just return a placeholder
+    return settings.TARGET_USER_ID
 
 
 def get_graph_token() -> str:

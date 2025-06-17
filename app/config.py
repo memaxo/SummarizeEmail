@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: list = ["http://localhost:3000", "http://localhost:8000"]
     
+    # Rate Limiting
+    RATE_LIMIT_REQUESTS: int = 100
+    RATE_LIMIT_TIMESCALE: str = "minute"
+    
     # Target user ID for email fetching (development only)
     TARGET_USER_ID: str = "me"
     

@@ -42,10 +42,9 @@ services:
   redis:
     # Use a standard Redis image from Docker Hub
     image: "redis:7-alpine"
-    # Expose the Redis port to other services in the same Docker network
-    # (but not to the host machine, for security)
-    expose:
-      - "6379"
+    # Expose Redis port to the host machine for local development
+    ports:
+      - "6379:6379"
     # Add a healthcheck to ensure Redis is ready before other services start
     healthcheck:
       test: ["CMD", "redis-cli", "--raw", "ping"]

@@ -8,9 +8,8 @@ from ..rag.models import Base
 
 logger = structlog.get_logger(__name__)
 
-# The DATABASE_URL needs to be constructed from environment variables
-# to be used by both the app and potentially alembic for migrations.
-DATABASE_URL = f"postgresql+psycopg2://{settings.DB_USER}:{settings.DB_PASSWORD}@{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
+# Use the DATABASE_URL directly from settings
+DATABASE_URL = settings.DATABASE_URL
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
