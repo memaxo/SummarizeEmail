@@ -4,7 +4,7 @@ from typing import List
 from fastapi import APIRouter, Request
 
 from .. import services
-from ..graph import email_repository
+from ..graph import graph_repo
 from ..models import BulkSummarizeRequest, BulkSummarizeResponse, SummarizeResponse
 
 router = APIRouter(
@@ -25,8 +25,8 @@ async def bulk_summarize(
     # Get user ID from OAuth token or fall back to TARGET_USER_ID
     user_id = await services.get_user_id_from_token(http_request)
     
-    # Use the imported email_repository which respects mock mode
-    emails = [email_repository.get_message(msg_id) for msg_id in request.message_ids]
+    # Use the imported graph_repo which respects mock mode
+    emails = [graph_repo.get_message(msg_id) for msg_id in request.message_ids]
     summaries = []
     
     for email in emails:
@@ -51,12 +51,12 @@ async def daily_summary(http_request: Request):
     # Get user ID from OAuth token or fall back to TARGET_USER_ID
     user_id = await services.get_user_id_from_token(http_request)
     
-    # Use the imported email_repository which respects mock mode
+    # Use the imported graph_repo which respects mock mode
     # Get emails from the last 24 hours
     today = datetime.now()
     yesterday = today - timedelta(days=1)
     
-    emails = email_repository.list_messages(start_datetime=yesterday, end_datetime=today)
+    emails = graph_repo.list_messages(start_datetime=yesterday, end_datetime=today)
     summaries = []
     
     for email in emails:

@@ -7,7 +7,7 @@ import structlog
 
 from .. import services
 from ..config import settings
-from ..graph import email_repository
+from ..graph import graph_repo
 from ..graph.models import Attachment, Email
 from ..models import ErrorResponse, SummarizeResponse, SummaryResponse, Summary
 from ..database import get_db, get_redis
@@ -36,8 +36,8 @@ async def get_message(
     # Get user ID from OAuth token or fall back to TARGET_USER_ID
     user_id = await services.get_user_id_from_token(request)
     
-    # Use the imported email_repository which respects mock mode
-    return email_repository.get_message(msg_id)
+    # Use the imported graph_repo which respects mock mode
+    return graph_repo.get_message(msg_id)
 
 @router.post("/{message_id}/summary", response_model=SummaryResponse)
 async def summarize_message(
@@ -134,8 +134,8 @@ async def list_attachments(
     # Get user ID from OAuth token or fall back to TARGET_USER_ID
     user_id = await services.get_user_id_from_token(request)
     
-    # Use the imported email_repository which respects mock mode
-    return email_repository.list_attachments(msg_id)
+    # Use the imported graph_repo which respects mock mode
+    return graph_repo.list_attachments(msg_id)
 
 @router.get("/{msg_id}/attachments/{att_id}", response_model=Attachment)
 async def get_attachment(
@@ -151,5 +151,5 @@ async def get_attachment(
     # Get user ID from OAuth token or fall back to TARGET_USER_ID
     user_id = await services.get_user_id_from_token(request)
     
-    # Use the imported email_repository which respects mock mode
-    return email_repository.get_attachment(message_id=msg_id, attachment_id=att_id) 
+    # Use the imported graph_repo which respects mock mode
+    return graph_repo.get_attachment(message_id=msg_id, attachment_id=att_id) 

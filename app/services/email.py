@@ -23,7 +23,7 @@ import httpx
 from ..auth import get_graph_token
 from ..config import settings
 from ..exceptions import EmailNotFoundError, GraphApiError, SummarizationError, RAGError
-from ..graph.email_repository import EmailRepository
+from ..graph import graph_repo
 from ..graph.models import Email
 from .document_parser import document_parser
 from ..prompts import (
@@ -142,19 +142,17 @@ async def fetch_email_content(
 ) -> str:
     """Fetch email content from the repository, respecting mock mode."""
     try:
-        # The email_repository is now a singleton that respects mock mode
-        from ..graph import email_repository
-        
-        email = email_repository.get_message(msg_id)
+        # The graph_repo is now a singleton that respects mock mode
+        email = graph_repo.get_message(msg_id)
         content = email.get_full_content()
 
         if include_attachments:
             logger.info("Fetching attachments for email", message_id=msg_id)
-            attachments = email_repository.list_attachments(msg_id)
+            attachments = graph_repo.list_attachments(msg_id)
             
             for attachment_meta in attachments:
                 logger.info("Parsing attachment", attachment_id=attachment_meta.id)
-                full_attachment = email_repository.get_attachment(msg_id, attachment_meta.id)
+                full_attachment = graph_repo.get_attachment(msg_id, attachment_meta.id)
                 attachment_text = document_parser.parse_content(full_attachment.contentBytes)
                 
                 if attachment_text:

@@ -3,12 +3,13 @@
 from ..config import settings
 
 # Conditionally import the correct repository class and instantiate it as a singleton.
+# We name it `graph_repo` to avoid a name collision with the `email_repository.py` module.
 if settings.USE_MOCK_GRAPH_API:
     from .mock_email_repository import MockEmailRepository
-    email_repository = MockEmailRepository()
+    graph_repo = MockEmailRepository()
 else:
     from .email_repository import EmailRepository
-    email_repository = EmailRepository()
+    graph_repo = EmailRepository()
 
-# This makes it so `from ..graph import email_repository` imports the instantiated object.
-__all__ = ["email_repository"] 
+# This makes it so `from ..graph import graph_repo` imports the instantiated object.
+__all__ = ["graph_repo"] 
