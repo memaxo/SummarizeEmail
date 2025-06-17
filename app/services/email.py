@@ -1,5 +1,5 @@
 import structlog
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Any, Optional
 
 import requests
 from langchain_community.chat_models import ChatOllama
@@ -13,13 +13,16 @@ from langchain.chains.combine_documents import create_stuff_documents_chain
 from fastapi import Request
 import hashlib
 import jwt
+import os
+import httpx
 
-from ..auth import get_graph_token
+from ..auth import get_graph_token, get_access_token
 from ..config import settings
 from ..exceptions import EmailNotFoundError, GraphApiError, SummarizationError, RAGError
 from ..graph.email_repository import EmailRepository
 from ..graph.models import Email
 from .document_parser import document_parser
+from app.logger import logger
 
 logger = structlog.get_logger(__name__)
 
@@ -244,4 +247,112 @@ def run_bulk_summarization(request: Request, emails: List[Email]) -> Tuple[str, 
     
     logger.info(f"Running bulk summarization for {len(emails)} emails.")
     # We can reuse the existing summarization chain for the combined content.
-    return run_summarization_chain(request, full_content) 
+    return run_summarization_chain(request, full_content)
+
+
+class EmailService:
+    def __init__(self):
+        # Check if we're in mock mode
+        self.use_mock = os.getenv("USE_MOCK_GRAPH_API", "false").lower() == "true"
+        if self.use_mock:
+            self.graph_base_url = os.getenv("MOCK_GRAPH_API_URL", "http://localhost:8001")
+            logger.info("Using Mock Graph API for testing")
+        else:
+            self.graph_base_url = "https://graph.microsoft.com"
+        
+        self.api_version = "v1.0"
+        
+    async def _get_headers(self) -> Dict[str, str]:
+        """Get authorization headers"""
+        if self.use_mock:
+            # Use a test token for mock API
+            return {"Authorization": "Bearer test-token"}
+        else:
+            token = await get_access_token()
+            return {"Authorization": f"Bearer {token}"}
+    
+    async def search_emails(
+        self, 
+        query: Optional[str] = None,
+        from_address: Optional[str] = None,
+        subject: Optional[str] = None,
+        limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Search emails using Microsoft Graph API or Mock API"""
+        try:
+            headers = await self._get_headers()
+            
+            # Build query parameters
+            params = {
+                "$top": limit,
+                "$select": "id,subject,from,sentDateTime,body",
+                "$orderby": "sentDateTime desc"
+            }
+            
+            # Add search/filter parameters
+            filters = []
+            if from_address:
+                filters.append(f"from/emailAddress/address eq '{from_address}'")
+            
+            if filters:
+                params["$filter"] = " and ".join(filters)
+            
+            if query:
+                params["$search"] = f'"{query}"'
+            
+            # Make request
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self.graph_base_url}/{self.api_version}/me/messages",
+                    headers=headers,
+                    params=params
+                )
+                response.raise_for_status()
+                
+                data = response.json()
+                return data.get("value", [])
+                
+        except Exception as e:
+            logger.error(f"Error searching emails: {str(e)}")
+            raise
+    
+    async def get_email(self, message_id: str) -> Dict[str, Any]:
+        """Get a specific email by ID"""
+        try:
+            headers = await self._get_headers()
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self.graph_base_url}/{self.api_version}/me/messages/{message_id}",
+                    headers=headers,
+                    params={"$select": "id,subject,from,sentDateTime,body,toRecipients"}
+                )
+                response.raise_for_status()
+                
+                return response.json()
+                
+        except Exception as e:
+            logger.error(f"Error getting email {message_id}: {str(e)}")
+            raise
+    
+    async def get_email_content(self, message_id: str) -> str:
+        """Get email content for summarization"""
+        email = await self.get_email(message_id)
+        
+        # Extract relevant content
+        content_parts = []
+        
+        # Add subject
+        if "subject" in email:
+            content_parts.append(f"Subject: {email['subject']}")
+        
+        # Add from
+        if "from" in email and "emailAddress" in email["from"]:
+            from_addr = email["from"]["emailAddress"]
+            content_parts.append(f"From: {from_addr.get('name', '')} <{from_addr.get('address', '')}>")
+        
+        # Add body
+        if "body" in email and "content" in email["body"]:
+            content_parts.append(f"\n{email['body']['content']}")
+        
+        return "\n".join(content_parts) 
