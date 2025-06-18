@@ -96,6 +96,16 @@ class Settings(BaseSettings):
     # Recommended chunk ≈ 2 % of context window (hard-capped below)
     CHUNK_SIZE_RATIO: float = 0.02
     DEFAULT_CHUNK_OVERLAP: int = 200
+    
+    # Caching
+    MAP_CACHE_EXPIRATION_SECONDS: int = 86_400  # 24 h TTL for map-stage chunks
+    
+    # Model-specific tokenizers
+    MODEL_TOKENIZERS: dict = {
+        "gemini-2.5-flash": "sentencepiece",  # Uses Google's SentencePiece
+        "gpt-4o-mini": "cl100k_base",
+        "gpt-4.1": "cl100k_base",
+    }
 
 
 @lru_cache()

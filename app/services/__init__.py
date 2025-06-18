@@ -7,7 +7,8 @@ from .email import (
     summarize_email,
     run_summarization_chain,
     run_bulk_summarization,
-    run_rag_chain
+    run_rag_chain,
+    astream_rag_chain
 )
 from .document_parser import document_parser
 
@@ -18,4 +19,5 @@ __all__ = [
     "run_bulk_summarization",
     "document_parser",
     "run_rag_chain",
+    "astream_rag_chain",
 ]

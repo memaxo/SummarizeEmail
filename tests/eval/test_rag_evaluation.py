@@ -33,12 +33,13 @@ RAG_GOLDEN_DATASET = [
 ]
 
 @pytest.mark.parametrize("data", RAG_GOLDEN_DATASET)
-def test_rag_chain_evaluation(data):
+@pytest.mark.asyncio
+async def test_rag_chain_evaluation(data):
     """
     Tests the RAG chain against a golden dataset to evaluate its performance.
     """
     # 1. Run the RAG chain with the question and context
-    answer = run_rag_chain(question=data["question"], context_docs=data["context"])
+    answer = await run_rag_chain(question=data["question"], context_docs=data["context"])
     
     # 2. Assert that the generated answer contains at least one of the expected keywords
     # This is a simple form of evaluation. More advanced methods could use

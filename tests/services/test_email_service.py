@@ -45,7 +45,10 @@ class TestEmailService:
         mock_settings.GEMINI_MODEL_NAME = "gemini-pro"
         
         with patch('app.services.email.ChatVertexAI') as mock_vertex:
-            with patch('app.services.email.vertexai') as mock_vertexai:
+            # Mock vertexai import that happens inside _get_llm
+            import sys
+            mock_vertexai = MagicMock()
+            with patch.dict(sys.modules, {'vertexai': mock_vertexai}):
                 _get_llm()
                 
                 mock_vertexai.init.assert_called_once_with(
@@ -73,15 +76,20 @@ class TestEmailService:
         """Test fetching email content without attachments."""
         mock_settings.USE_MOCK_GRAPH_API = True
         
-        with patch('app.services.email.MockEmailRepository') as mock_repo_class:
-            # Setup mock
-            mock_repo = MagicMock()
-            mock_repo_class.return_value = mock_repo
-            
-            mock_email = MagicMock()
-            mock_email.get_full_content.return_value = "Test email content"
-            mock_repo.get_message.return_value = mock_email
-            
+        # Mock the repository import that happens inside fetch_email_content
+        import sys
+        mock_repo_module = MagicMock()
+        mock_repo_class = MagicMock()
+        mock_repo = MagicMock()
+        
+        mock_email = MagicMock()
+        mock_email.get_full_content.return_value = "Test email content"
+        mock_repo.get_message.return_value = mock_email
+        
+        mock_repo_class.return_value = mock_repo
+        mock_repo_module.MockEmailRepository = mock_repo_class
+        
+        with patch.dict(sys.modules, {'app.graph.mock_email_repository': mock_repo_module}):
             # Test
             content = fetch_email_content("msg-123", "user-456", include_attachments=False)
             
@@ -94,25 +102,30 @@ class TestEmailService:
         """Test fetching email content with attachments."""
         mock_settings.USE_MOCK_GRAPH_API = False
         
-        with patch('app.services.email.EmailRepository') as mock_repo_class:
-            # Setup mock
-            mock_repo = MagicMock()
-            mock_repo_class.return_value = mock_repo
-            
-            mock_email = MagicMock()
-            mock_email.get_full_content.return_value = "Test email content"
-            mock_repo.get_message.return_value = mock_email
-            
-            # Mock attachment
-            mock_attachment_meta = MagicMock()
-            mock_attachment_meta.id = "att-1"
-            mock_attachment_meta.name = "document.pdf"
-            mock_repo.list_attachments.return_value = [mock_attachment_meta]
-            
-            mock_attachment = MagicMock()
-            mock_attachment.contentBytes = b"fake-content"
-            mock_repo.get_attachment.return_value = mock_attachment
-            
+        # Mock the repository import that happens inside fetch_email_content
+        import sys
+        mock_repo_module = MagicMock()
+        mock_repo_class = MagicMock()
+        mock_repo = MagicMock()
+        
+        mock_email = MagicMock()
+        mock_email.get_full_content.return_value = "Test email content"
+        mock_repo.get_message.return_value = mock_email
+        
+        # Mock attachment
+        mock_attachment_meta = MagicMock()
+        mock_attachment_meta.id = "att-1"
+        mock_attachment_meta.name = "document.pdf"
+        mock_repo.list_attachments.return_value = [mock_attachment_meta]
+        
+        mock_attachment = MagicMock()
+        mock_attachment.contentBytes = b"fake-content"
+        mock_repo.get_attachment.return_value = mock_attachment
+        
+        mock_repo_class.return_value = mock_repo
+        mock_repo_module.EmailRepository = mock_repo_class
+        
+        with patch.dict(sys.modules, {'app.graph.email_repository': mock_repo_module}):
             with patch('app.services.email.document_parser') as mock_parser:
                 mock_parser.parse_content.return_value = "Parsed attachment text"
                 
@@ -222,7 +235,7 @@ class TestEmailService:
                 # Mock RunnableParallel for map stage
                 with patch('app.services.email.RunnableParallel') as mock_parallel:
                     mock_parallel_instance = MagicMock()
-                    mock_parallel_instance.batch.return_value = [{"out": "Mapped content"}]
+                    mock_parallel_instance.abatch = AsyncMock(return_value=[{"out": "Mapped content"}])
                     mock_parallel.return_value = mock_parallel_instance
                     
                     # Mock the reduce chain
@@ -246,7 +259,8 @@ class TestEmailService:
                                 assert from_cache is False
                                 mock_redis.set.assert_called_once()
     
-    def test_run_rag_chain_success(self):
+    @pytest.mark.asyncio
+    async def test_run_rag_chain_success(self):
         """Test RAG chain execution with LCEL and parallel processing."""
         # Setup
         test_docs = [
@@ -270,21 +284,21 @@ class TestEmailService:
                 with patch('app.services.email.RunnableParallel') as mock_parallel:
                     # Mock the batch method to return proper results
                     mock_parallel_instance = MagicMock()
-                    mock_parallel_instance.batch.return_value = [
+                    mock_parallel_instance.abatch = AsyncMock(return_value=[
                         {"out": "Relevant text from doc 1"},
                         {"out": "Relevant text from doc 2"}
-                    ]
+                    ])
                     mock_parallel_instance.with_config.return_value = mock_parallel_instance
                     mock_parallel.return_value = mock_parallel_instance
                     
                     # Mock the final reduce chain
-                    def mock_invoke(inputs):
+                    async def mock_ainvoke(inputs):
                         if "doc_summaries" in inputs:
                             return "RAG answer"
                         return ""
                     
                     mock_chain = MagicMock()
-                    mock_chain.invoke = MagicMock(side_effect=mock_invoke)
+                    mock_chain.ainvoke = AsyncMock(side_effect=mock_ainvoke)
                     mock_chain.with_config.return_value = mock_chain
                     
                     # Mock the prompt and parser chain construction
@@ -296,23 +310,30 @@ class TestEmailService:
                         with patch('app.services.email.RAG_REDUCE_PROMPT', mock_prompt):
                             with patch('app.services.email.StrOutputParser', return_value=mock_parser):
                                 # Test
-                                result = run_rag_chain("What is the status?", test_docs)
+                                result = await run_rag_chain("What is the status?", test_docs)
                                 
                                 # Assert
                                 assert result == "RAG answer"
-                                mock_parallel_instance.batch.assert_called_once()
+                                mock_parallel_instance.abatch.assert_called_once()
     
     def test_fetch_email_content_error_handling(self):
         """Test error handling in fetch_email_content."""
         with patch('app.services.email.settings') as mock_settings:
             mock_settings.USE_MOCK_GRAPH_API = True
             
-            with patch('app.services.email.MockEmailRepository') as mock_repo_class:
-                # Setup mock to raise exception
-                mock_repo = MagicMock()
-                mock_repo_class.return_value = mock_repo
-                mock_repo.get_message.side_effect = Exception("Test error")
-                
+            # Mock the repository import that happens inside fetch_email_content
+            import sys
+            mock_repo_module = MagicMock()
+            mock_repo_class = MagicMock()
+            mock_repo = MagicMock()
+            
+            # Setup mock to raise exception
+            mock_repo.get_message.side_effect = Exception("Test error")
+            
+            mock_repo_class.return_value = mock_repo
+            mock_repo_module.MockEmailRepository = mock_repo_class
+            
+            with patch.dict(sys.modules, {'app.graph.mock_email_repository': mock_repo_module}):
                 # Test & Assert
                 with pytest.raises(EmailNotFoundError):
                     fetch_email_content("msg-123", "user-456") 

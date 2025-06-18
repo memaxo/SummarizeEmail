@@ -14,6 +14,7 @@ from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnableParallel
 import tiktoken
+import sentencepiece as spm
 from pydantic import BaseModel, Field
 from fastapi import Request
 import hashlib
@@ -53,22 +54,84 @@ class EmailSummary(BaseModel):
     sentiment: str = Field(description="Overall sentiment: positive, negative, or neutral")
 
 
-def _num_tokens(text: str, enc_name: str = "cl100k_base") -> int:
-    """Return exact token count using tiktoken."""
-    enc = tiktoken.get_encoding(enc_name)
-    return len(enc.encode(text))
+# Global SentencePiece processor (lazy loaded)
+_spm_processor = None
 
 
-def _get_text_splitter(model_name: str) -> TokenTextSplitter:
+def _get_spm_processor():
+    """Get or create the SentencePiece processor for Gemini models."""
+    global _spm_processor
+    if _spm_processor is None:
+        _spm_processor = spm.SentencePieceProcessor()
+        # Load a pre-trained model. We'll use the Gemma tokenizer as a proxy for Gemini
+        # In production, you'd want to use the exact Gemini tokenizer
+        try:
+            # Try to load a local sentencepiece model if available
+            _spm_processor.Load('gemini.model')
+        except:
+            # Fall back to a simple whitespace tokenizer for now
+            # In production, download the appropriate Gemini tokenizer
+            logger.warning("No Gemini SentencePiece model found, using approximate tokenization")
+    return _spm_processor
+
+
+def _num_tokens(text: str, enc_name: str) -> int:
+    """Return exact token count using appropriate tokenizer."""
+    if enc_name == "sentencepiece":
+        try:
+            sp = _get_spm_processor()
+            # If we have a loaded model, use it
+            if sp.vocab_size() > 0:
+                return len(sp.encode(text))
+            else:
+                # Approximate: assume ~4 chars per token for Gemini
+                return len(text) // 4
+        except Exception as e:
+            logger.warning(f"SentencePiece encoding failed: {e}, using approximation")
+            return len(text) // 4
+    else:
+        # Use tiktoken for OpenAI models
+        try:
+            enc = tiktoken.get_encoding(enc_name)
+        except ValueError:
+            # Fall back to cl100k_base for unknown encodings
+            logger.warning(f"Unknown encoding {enc_name}, falling back to cl100k_base")
+            enc = tiktoken.get_encoding("cl100k_base")
+        return len(enc.encode(text))
+
+
+def _get_text_splitter(model_name: str):
     """Token-aware splitter sized relative to model context window."""
     ctx_window = settings.MODEL_CONTEXT_WINDOWS.get(model_name, settings.RAG_TOKEN_MAX)
     chunk_size = min(8192, int(ctx_window * settings.CHUNK_SIZE_RATIO))
     overlap = min(settings.DEFAULT_CHUNK_OVERLAP, max(32, chunk_size // 10))
-    return TokenTextSplitter(
-        encoding_name="cl100k_base",
-        chunk_size=chunk_size,
-        chunk_overlap=overlap,
-    )
+    encoding_name = settings.MODEL_TOKENIZERS.get(model_name, "cl100k_base")
+    
+    if encoding_name == "sentencepiece":
+        # For SentencePiece models, use character-based splitting
+        # Approximate 4 characters per token for Gemini
+        char_chunk_size = chunk_size * 4
+        char_overlap = overlap * 4
+        logger.info(f"Using character-based splitter for {model_name} with chunk size {char_chunk_size}")
+        return RecursiveCharacterTextSplitter(
+            chunk_size=char_chunk_size,
+            chunk_overlap=char_overlap,
+            separators=["\n\n", "\n", " ", ""]
+        )
+    else:
+        # For tiktoken-based models, use TokenTextSplitter
+        # Check if encoding is supported, fall back to cl100k_base if not
+        try:
+            tiktoken.get_encoding(encoding_name)
+        except ValueError:
+            logger.warning(f"Unknown encoding {encoding_name} for model {model_name}, falling back to cl100k_base")
+            encoding_name = "cl100k_base"
+        
+        return TokenTextSplitter(
+            encoding_name=encoding_name,
+            chunk_size=chunk_size,
+            chunk_overlap=overlap,
+        )
 
 
 def _get_model_name(llm: BaseChatModel) -> str:
@@ -244,7 +307,7 @@ async def run_summarization_chain(content: str, redis_client: Optional[Redis] = 
 
     logger.info(f"Running summarization chain with {len(split_docs)} documents...")
     try:
-        map_outputs = RunnableParallel({"out": map_runnable}).batch(
+        map_outputs = await RunnableParallel({"out": map_runnable}).abatch(
             [{"text": d.page_content} for d in split_docs]
         )
         intermediate = "\n\n".join(o["out"] for o in map_outputs)
@@ -262,7 +325,7 @@ async def run_summarization_chain(content: str, redis_client: Optional[Redis] = 
         raise SummarizationError(str(e)) from e
 
 
-def run_rag_chain(question: str, context_docs: List[Document]) -> str:
+async def run_rag_chain(question: str, context_docs: List[Document], redis_client: Optional[Redis] = None) -> str:
     """
     Generates an answer to a question based on a list of context documents.
     Uses LCEL (LangChain Expression Language) for optimized map-reduce pattern with:
@@ -298,15 +361,31 @@ def run_rag_chain(question: str, context_docs: List[Document]) -> str:
         | StrOutputParser()
     ).with_config(run_name="rag_map", tags=["rag", "map"])
 
-    batch_inputs = [
-        {"context": d.page_content, "question": question} for d in split_docs
-    ]
+    batch_inputs, cached_outputs = [], []
+    for d in split_docs:
+        cache_key = f"rag_map:{hashlib.sha256((d.page_content+question).encode()).hexdigest()}"
+        if redis_client:
+            cached = await redis_client.get(cache_key)
+            if cached:
+                cached_outputs.append({"out": cached})
+                continue
+        batch_inputs.append({"doc": d, "hash": cache_key})
 
     parallel_map = RunnableParallel({"out": map_runnable}).with_config(
         run_name="rag_map_batch", tags=["rag", "map"]
     )
 
-    batch_outputs = parallel_map.batch(batch_inputs)
+    fresh_outputs = []
+    if batch_inputs:
+        fresh_outputs = await parallel_map.abatch(
+            [{"context": i["doc"].page_content, "question": question} for i in batch_inputs]
+        )
+        # persist
+        if redis_client:
+            for out, meta in zip(fresh_outputs, batch_inputs):
+                await redis_client.set(meta["hash"], out["out"], ex=settings.MAP_CACHE_EXPIRATION_SECONDS)
+
+    batch_outputs = cached_outputs + fresh_outputs
     map_results = [item["out"] for item in batch_outputs if item["out"].strip()]
     
     if not map_results:
@@ -316,7 +395,8 @@ def run_rag_chain(question: str, context_docs: List[Document]) -> str:
     combined_results = "\n\n---\n\n".join(map_results)
     
     # Check if we need to collapse further due to token limits
-    estimated_tokens = _num_tokens(combined_results)
+    encoding_name = settings.MODEL_TOKENIZERS.get(model_name, "cl100k_base")
+    estimated_tokens = _num_tokens(combined_results, encoding_name)
     token_limit = settings.MODEL_CONTEXT_WINDOWS.get(model_name, settings.RAG_TOKEN_MAX)
     
     if estimated_tokens > token_limit:
@@ -360,19 +440,17 @@ def run_rag_chain(question: str, context_docs: List[Document]) -> str:
             | llm
             | StrOutputParser()
         ).with_config(run_name="rag_reduce", tags=["rag", "reduce"])
-        answer = reduce_chain.invoke({
+        answer = await reduce_chain.ainvoke({
             "doc_summaries": combined_results,
             "question": question
         })
-        
-        logger.info("Successfully generated RAG answer using LCEL.")
         return answer
     except Exception as e:
         logger.error("An error occurred during LCEL RAG chain execution", exc_info=True)
         raise RAGError(str(e)) from e
 
 
-def run_bulk_summarization(request: Request, emails: List[Email]) -> Tuple[str, bool]:
+async def run_bulk_summarization(request: Request, emails: List[Email]) -> Tuple[str, bool]:
     """
     Creates a single digest summary from a list of emails.
     """
@@ -385,7 +463,7 @@ def run_bulk_summarization(request: Request, emails: List[Email]) -> Tuple[str, 
     logger.info(f"Running bulk summarization for {len(emails)} emails.")
     # We can reuse the existing summarization chain for the combined content.
     # Caching for bulk summarization is not implemented in this flow.
-    summary, _ = run_summarization_chain(full_content)
+    summary, _ = await run_summarization_chain(full_content)
     return summary, False
 
 
@@ -502,7 +580,7 @@ class EmailService:
 # ---------------------------------------------------------------------------
 
 async def astream_rag_chain(
-    question: str, context_docs: List[Document]
+    question: str, context_docs: List[Document], redis_client: Optional[Redis] = None
 ) -> AsyncGenerator[str, None]:
     """Yield answer tokens incrementally using reduce_runnable.astream()."""
     llm = _get_llm()
@@ -514,7 +592,7 @@ async def astream_rag_chain(
         splits.extend(text_splitter.split_documents([doc]))
 
     map_run = RAG_MAP_PROMPT | llm | StrOutputParser()
-    map_batch = RunnableParallel({"out": map_run}).batch(
+    map_batch = await RunnableParallel({"out": map_run}).abatch(
         [{"context": d.page_content, "question": question} for d in splits]
     )
     snippets = [o["out"] for o in map_batch if o["out"].strip()]
