@@ -84,6 +84,7 @@ class Settings(BaseSettings):
     
     # RAG Configuration
     RAG_INGESTION_INTERVAL_HOURS: int = 24  # How often to ingest emails for RAG
+    RAG_TOKEN_MAX: int = 16000  # Maximum tokens for RAG chain (safety net for Gemini's 30k context)
 
 
 @lru_cache()

@@ -53,6 +53,40 @@ Answer:"""
 
 RAG_PROMPT = ChatPromptTemplate.from_template(RAG_PROMPT_TEMPLATE)
 
+# LCEL-optimized RAG prompts for map-reduce pattern
+RAG_MAP_PROMPT_TEMPLATE = """Use the following portion of a long document to see if any of the text is relevant to answer the question.
+Return any relevant text verbatim. Quote the exact relevant portions.
+
+Question: {question}
+
+Document excerpt:
+---
+{context}
+---
+
+Relevant text:"""
+
+RAG_MAP_PROMPT = ChatPromptTemplate.from_template(RAG_MAP_PROMPT_TEMPLATE)
+
+RAG_REDUCE_PROMPT_TEMPLATE = """You are synthesizing information from multiple email excerpts to answer a user's question.
+
+Question: {question}
+
+Here are the relevant excerpts from the user's emails:
+---
+{doc_summaries}
+---
+
+Based on these excerpts, provide a final, consolidated answer. Follow these rules:
+1. Base your answer only on the provided excerpts
+2. If the excerpts don't contain enough information, state that clearly
+3. Be concise and directly answer the question
+4. Quote relevant snippets where appropriate
+
+Answer:"""
+
+RAG_REDUCE_PROMPT = ChatPromptTemplate.from_template(RAG_REDUCE_PROMPT_TEMPLATE)
+
 # Bulk Summarization Prompt
 BULK_SUMMARY_PROMPT_TEMPLATE = """Please provide a comprehensive digest summary of the following emails. 
 Identify common themes, important action items, and key decisions across all messages:

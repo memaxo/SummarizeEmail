@@ -226,7 +226,7 @@ class TestEmailService:
                 mock_redis.set.assert_called_once()
     
     def test_run_rag_chain_success(self):
-        """Test RAG chain execution."""
+        """Test RAG chain execution with LCEL."""
         # Setup
         test_docs = [
             Document(page_content="Doc 1", metadata={"id": "1"}),
@@ -234,27 +234,38 @@ class TestEmailService:
         ]
         
         with patch('app.services.email._get_llm') as mock_get_llm:
-            # Setup mock LLM
+            # Setup mock LLM that returns proper string responses
             mock_llm = MagicMock()
+            
+            # Mock the chain invoke to return strings
+            def mock_invoke(inputs):
+                # For map chain calls
+                if "context" in inputs:
+                    return "Relevant text from document"
+                # For reduce chain calls
+                elif "doc_summaries" in inputs:
+                    return "RAG answer"
+                return ""
+            
+            # Set up the mock to work with LCEL pipe operator
+            mock_chain = MagicMock()
+            mock_chain.invoke = MagicMock(side_effect=mock_invoke)
+            
+            # Mock the pipe operations for LCEL
+            mock_prompt = MagicMock()
+            mock_parser = MagicMock()
+            mock_prompt.__or__ = MagicMock(return_value=MagicMock(__or__=MagicMock(return_value=mock_chain)))
+            
             mock_get_llm.return_value = mock_llm
             
-            # Mock the chains
-            with patch('app.services.email.LLMChain') as mock_llm_chain:
-                with patch('app.services.email.MapReduceDocumentsChain') as mock_map_reduce:
-                    # Setup chain mocks
-                    mock_map_chain = MagicMock()
-                    mock_llm_chain.return_value = mock_map_chain
-                    
-                    mock_chain = MagicMock()
-                    mock_chain.invoke.return_value = {"output_text": "RAG answer"}
-                    mock_map_reduce.return_value = mock_chain
-                    
-                    # Test
-                    result = run_rag_chain("What is the status?", test_docs)
-                    
-                    # Assert
-                    assert result == "RAG answer"
-                    mock_chain.invoke.assert_called_once()
+            with patch('app.services.email.RAG_MAP_PROMPT', mock_prompt):
+                with patch('app.services.email.RAG_REDUCE_PROMPT', mock_prompt):
+                    with patch('app.services.email.StrOutputParser', return_value=mock_parser):
+                        # Test
+                        result = run_rag_chain("What is the status?", test_docs)
+                        
+                        # Assert
+                        assert result == "RAG answer"
     
     def test_fetch_email_content_error_handling(self):
         """Test error handling in fetch_email_content."""
