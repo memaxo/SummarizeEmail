@@ -1,11 +1,17 @@
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Query, Depends
 
-from ..graph import graph_repo
 from ..graph.models import Email
-from ..services.email import get_user_id_from_token
+from ..config import settings
+from ..auth.dependencies import get_current_user_id
+
+# Conditional import for repository
+if settings.USE_MOCK_GRAPH_API:
+    from ..graph.mock_email_repository import MockEmailRepository as EmailRepository
+else:
+    from ..graph.email_repository import EmailRepository
 
 router = APIRouter(
     prefix="/emails",
@@ -14,7 +20,7 @@ router = APIRouter(
 
 @router.get("/", response_model=List[Email])
 async def search_emails(
-    request: Request,
+    user_id: str = Depends(get_current_user_id),
     search: Optional[str] = Query(None, description="A free-text search query (uses Graph's $search)."),
     from_address: Optional[str] = Query(None, description="Filter by the sender's email address."),
     subject_contains: Optional[str] = Query(None, description="Filter by a keyword in the subject."),
@@ -24,15 +30,10 @@ async def search_emails(
     limit: int = Query(25, ge=1, le=100, description="The maximum number of emails to return."),
 ):
     """
-    Searches for emails based on a powerful, free-text query and other filters.
-    
-    In production with Custom GPT, this uses the authenticated user's ID from the OAuth token.
+    Searches for emails for the authenticated user based on a powerful, free-text query and other filters.
     """
-    # Get user ID from OAuth token or fall back to TARGET_USER_ID
-    user_id = await get_user_id_from_token(request)
-    
-    # Use the imported graph_repo which respects mock mode
-    emails = graph_repo.list_messages(
+    repo = EmailRepository(user_id=user_id)
+    emails = repo.list_messages(
         search=search,
         from_address=from_address,
         subject_contains=subject_contains,

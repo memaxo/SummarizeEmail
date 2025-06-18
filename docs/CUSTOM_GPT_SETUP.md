@@ -34,17 +34,21 @@ When deployed as a Custom GPT, your Email Summarizer will:
 
 ### 1. Configure Your API for Production
 
-Ensure your API can handle per-user authentication:
+Your API now uses secure JWT validation for authentication:
 
 ```python
-# The API now extracts user ID from OAuth tokens
-# No TARGET_USER_ID needed in production
-async def get_user_id_from_token(request: Request) -> str:
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        token = auth_header.split(" ")[1]
-        # Decode and extract user ID from token
-        # Falls back to TARGET_USER_ID for local development
+# The API validates JWT tokens and extracts user ID securely
+# Uses FastAPI dependencies for automatic authentication
+from fastapi import Depends
+from app.auth.dependencies import get_current_user_id
+
+@app.get("/emails/")
+async def search_emails(
+    user_id: str = Depends(get_current_user_id),
+    # ... other parameters
+):
+    # user_id is automatically extracted from the validated JWT token
+    # No TARGET_USER_ID needed in production
 ```
 
 ### 2. Create the Custom GPT

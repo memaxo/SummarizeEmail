@@ -5,7 +5,8 @@ import structlog
 
 from ..db.session import get_db
 from ..tasks import ingest_emails_task
-from ..services import get_user_id_from_token, run_rag_chain
+from ..auth.dependencies import get_current_user_id
+from ..services import run_rag_chain
 from ..rag.vector_db_repository import VectorDBRepository
 from ..models import RAGAnswerResponse
 from langchain_core.documents import Document
@@ -20,13 +21,11 @@ router = APIRouter(
 @router.post("/ingest", status_code=202)
 async def ingest_emails(
     query: str, 
-    request: Request,
-    db: Session = Depends(get_db)
+    user_id: str = Depends(get_current_user_id)
 ):
     """
     Triggers a background Celery task to ingest emails from a search query.
     """
-    user_id = await get_user_id_from_token(request)
     task = ingest_emails_task.delay(query=query, user_id=user_id)
     return {"task_id": task.id, "status": "Ingestion started."}
 
@@ -45,14 +44,12 @@ def get_ingest_status(task_id: str):
 @router.get("/query", response_model=RAGAnswerResponse)
 async def query_emails(
     q: str, 
-    request: Request,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user_id)
 ):
     """
     Performs a semantic search and generates an answer based on the results.
     """
-    user_id = await get_user_id_from_token(request)
-    
     repo = VectorDBRepository(db)
     retrieved_emails = repo.query(q, user_id=user_id)
     

@@ -141,7 +141,7 @@ class MockEmailRepository:
             emails.append(email)
         
         # Sort by sent date (newest first) and limit
-        emails.sort(key=lambda e: e.sentDateTime, reverse=True)
+        emails.sort(key=lambda e: e.sent_date_time, reverse=True)
         return emails[:top]
     
     def list_attachments(self, message_id: str) -> List[Attachment]:

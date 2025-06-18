@@ -1,3 +1,4 @@
+from redis.asyncio import Redis
 import structlog
 from typing import List, Tuple, Dict, Any, Optional, Union
 
@@ -24,7 +25,7 @@ import jwt
 import os
 import httpx
 
-from ..auth import get_graph_token
+from ..auth.graph import get_graph_token
 from ..config import settings
 from ..exceptions import EmailNotFoundError, GraphApiError, SummarizationError, RAGError
 from ..graph import graph_repo
@@ -120,39 +121,6 @@ def _get_llm() -> BaseChatModel:
         raise ValueError(f"Unsupported LLM provider: {settings.LLM_PROVIDER}")
 
 
-async def get_user_id_from_token(request: Request) -> str:
-    """Extract the user ID from the OAuth token in the request.
-    
-    In production with Custom GPT, the user's identity comes from
-    the OAuth token, not from environment variables.
-    """
-    # Get the authorization header
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        # Fallback to TARGET_USER_ID for local development/testing
-        return settings.TARGET_USER_ID
-    
-    token = auth_header.split(" ")[1]
-    
-    try:
-        # Decode the token to get user info
-        # This is a simplified example - in production you'd validate the token
-        decoded = jwt.decode(token, options={"verify_signature": False})
-        
-        # Microsoft tokens typically have 'oid' (object ID) or 'sub' (subject)
-        user_id = decoded.get('oid') or decoded.get('sub') or decoded.get('preferred_username')
-        
-        if not user_id:
-            logger.warning("No user ID found in token, falling back to TARGET_USER_ID")
-            return settings.TARGET_USER_ID
-            
-        return user_id
-    except Exception as e:
-        logger.error(f"Error decoding token: {e}")
-        # Fallback for development
-        return settings.TARGET_USER_ID
-
-
 def fetch_email_content(
     msg_id: str,
     user_id: str,
@@ -223,17 +191,16 @@ async def summarize_email(content: str, structured: bool = False) -> Union[str, 
     return response
 
 
-def run_summarization_chain(request: Request, content: str) -> Tuple[str, bool]:
+async def run_summarization_chain(content: str, redis_client: Optional[Redis] = None) -> Tuple[str, bool]:
     """
     Summarizes the given text using a LangChain map-reduce summarization chain.
     It checks for a cached summary in Redis before calling the LLM.
     Returns the summary and a boolean indicating if it was from the cache.
     """
     # 1. Check for cached result
-    redis_client = request.app.state.redis
-    cache_key = f"summary:{hashlib.sha256(content.encode()).hexdigest()}"
     if redis_client:
-        cached_summary = redis_client.get(cache_key)
+        cache_key = f"summary:{hashlib.sha256(content.encode()).hexdigest()}"
+        cached_summary = await redis_client.get(cache_key)
         if cached_summary:
             logger.info("Returning cached summary", cache_key=cache_key)
             return cached_summary, True
@@ -259,7 +226,7 @@ def run_summarization_chain(request: Request, content: str) -> Tuple[str, bool]:
         
         # 3. Store the new result in the cache
         if redis_client:
-            redis_client.set(cache_key, summary, ex=settings.CACHE_EXPIRATION_SECONDS)
+            await redis_client.set(cache_key, summary, ex=settings.CACHE_EXPIRATION_SECONDS)
             logger.info("Stored new summary in cache", cache_key=cache_key)
 
         return summary, False
@@ -344,7 +311,9 @@ def run_bulk_summarization(request: Request, emails: List[Email]) -> Tuple[str, 
     
     logger.info(f"Running bulk summarization for {len(emails)} emails.")
     # We can reuse the existing summarization chain for the combined content.
-    return run_summarization_chain(request, full_content)
+    # Caching for bulk summarization is not implemented in this flow.
+    summary, _ = run_summarization_chain(full_content)
+    return summary, False
 
 
 class EmailService:

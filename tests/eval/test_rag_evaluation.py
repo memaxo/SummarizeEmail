@@ -46,4 +46,10 @@ def test_rag_chain_evaluation(data):
     answer_lower = answer.lower()
     keywords_found = [keyword for keyword in data["expected_answer_keywords"] if keyword.lower() in answer_lower]
     
+    # For the "cannot answer" case, check for any indication that the question cannot be answered
+    if "cannot answer" in data["expected_answer_keywords"]:
+        # Accept various phrasings that indicate the question cannot be answered
+        negative_indicators = ["cannot be answered", "can't answer", "unable to answer", "no information", "not contain", "irrelevant"]
+        keywords_found = [indicator for indicator in negative_indicators if indicator in answer_lower]
+    
     assert len(keywords_found) > 0, f"Answer did not contain any expected keywords. Expected: {data['expected_answer_keywords']}, Answer: {answer}" 

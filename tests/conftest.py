@@ -5,8 +5,13 @@ from unittest.mock import patch, MagicMock
 import os
 from dotenv import load_dotenv
 
+from .auth.helpers import PUBLIC_KEY_PEM
+
 # Load .env file for testing environment
 load_dotenv()
+
+TEST_TENANT_ID = "00000000-0000-0000-0000-000000000000"
+TEST_CLIENT_ID = "11111111-1111-1111-1111-111111111111"
 
 # Set test environment variables, prioritizing .env file over defaults
 os.environ.update({
@@ -15,10 +20,12 @@ os.environ.update({
     "GOOGLE_APPLICATION_CREDENTIALS": os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
     "GOOGLE_CLOUD_PROJECT": os.getenv("GOOGLE_CLOUD_PROJECT"),
     
+    # Set static Azure AD identifiers for consistent testing
+    "AZURE_TENANT_ID": TEST_TENANT_ID,
+    "AZURE_CLIENT_ID": TEST_CLIENT_ID,
+    "AZURE_CLIENT_SECRET": "test_secret",
+    
     # Mock other credentials for tests that don't hit external services
-    "TENANT_ID": "test_tenant",
-    "CLIENT_ID": "test_client", 
-    "CLIENT_SECRET": "test_secret",
     "TARGET_USER_ID": "test_user",
     "REDIS_URL": "redis://localhost:6379/0",
     "POSTGRES_USER": "test_user",
@@ -41,6 +48,49 @@ with patch('sqlalchemy.create_engine') as mock_create_engine:
     
     # Now import the app after mocking
     from app.main import app
+
+@pytest.fixture(autouse=True)
+def mock_jwks_client(monkeypatch):
+    """
+    Mocks the JWKS client to prevent network calls to Azure AD during tests.
+    It provides a test public key to validate tokens signed with the test private key.
+    """
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.backends import default_backend
+    
+    # Load the public key from PEM
+    public_key = serialization.load_pem_public_key(
+        PUBLIC_KEY_PEM, 
+        backend=default_backend()
+    )
+    
+    # We create a mock signing key object that the PyJWKClient would normally return
+    mock_signing_key = MagicMock()
+    mock_signing_key.key = public_key
+
+    # Mock the PyJWKClient class itself
+    class MockPyJWKClient:
+        def __init__(self, *args, **kwargs):
+            # Don't make any network calls
+            pass
+            
+        def get_signing_key_from_jwt(self, token):
+            return mock_signing_key
+    
+    # Replace the PyJWKClient class with our mock
+    monkeypatch.setattr("jwt.PyJWKClient", MockPyJWKClient)
+    
+    # Also need to patch it in the validator module since it's already imported
+    monkeypatch.setattr("app.auth.validator.PyJWKClient", MockPyJWKClient)
+    
+    # Also mock the httpx client to prevent any network calls
+    async def mock_get(*args, **kwargs):
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"jwks_uri": "https://mock.jwks.uri"}
+        mock_response.raise_for_status = MagicMock()
+        return mock_response
+    
+    monkeypatch.setattr("httpx.AsyncClient.get", mock_get)
 
 
 @pytest.fixture

@@ -1,49 +1,15 @@
 """
 Test file to verify authentication updates work correctly.
-This tests the new OAuth/JWT handling for Custom GPT integration.
+This tests the new JWT authentication system.
 """
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 from fastapi import Request
 
-from app.services.email import get_user_id_from_token
 from app.graph.email_repository import EmailRepository
 from app.rag.vector_db_repository import VectorDBRepository
-
-
-@pytest.mark.asyncio
-async def test_get_user_id_from_token_with_bearer():
-    """Test extracting user ID from OAuth token."""
-    # Create a mock request with Authorization header
-    request = MagicMock(spec=Request)
-    request.headers = {
-        "Authorization": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJvaWQiOiJ0ZXN0X3VzZXJfMTIzIiwic3ViIjoidGVzdF91c2VyXzEyMyJ9.test"
-    }
-    
-    # Mock jwt.decode to return test data
-    import app.services.email
-    original_decode = app.services.email.jwt.decode
-    app.services.email.jwt.decode = lambda token, **kwargs: {"oid": "test_user_123", "sub": "test_user_123"}
-    
-    try:
-        user_id = await get_user_id_from_token(request)
-        assert user_id == "test_user_123"
-    finally:
-        app.services.email.jwt.decode = original_decode
-
-
-@pytest.mark.asyncio
-async def test_get_user_id_from_token_without_bearer(mocker):
-    """Test fallback to TARGET_USER_ID when no token present."""
-    # Create a mock request without Authorization header
-    request = MagicMock(spec=Request)
-    request.headers = {}
-    
-    # Mock settings to return a test TARGET_USER_ID
-    mocker.patch("app.services.email.settings.TARGET_USER_ID", "fallback_user")
-    
-    user_id = await get_user_id_from_token(request)
-    assert user_id == "fallback_user"
+from tests.auth.helpers import create_test_token
+from app.config import settings
 
 
 def test_email_repository_with_user_id():
@@ -107,9 +73,16 @@ def test_vector_db_repository_with_user_id(mocker):
 
 @pytest.mark.asyncio
 async def test_routes_use_dynamic_user_id(client, mocker):
-    """Test that routes properly extract and use user ID from tokens."""
-    # Mock get_user_id_from_token to return a test user
-    mocker.patch("app.routes.emails.get_user_id_from_token", return_value="oauth_user_789")
+    """Test that routes properly extract and use user ID from JWT tokens."""
+    # Create a valid token for authentication
+    user_id = "oauth_user_789"
+    token = create_test_token(
+        claims={
+            "oid": user_id,
+            "aud": settings.AZURE_CLIENT_ID,
+            "iss": f"https://sts.windows.net/{settings.AZURE_TENANT_ID}/"
+        }
+    )
     
     # Mock EmailRepository to track instantiation
     mock_repo_class = mocker.patch("app.routes.emails.EmailRepository")
@@ -117,9 +90,12 @@ async def test_routes_use_dynamic_user_id(client, mocker):
     mock_repo_instance.list_messages.return_value = []
     mock_repo_class.return_value = mock_repo_instance
     
-    # Make a request
-    response = client.get("/emails/")
+    # Make a request with authentication
+    response = client.get(
+        "/emails/",
+        headers={"Authorization": f"Bearer {token}"}
+    )
     
     assert response.status_code == 200
     # Verify EmailRepository was created with the OAuth user ID
-    mock_repo_class.assert_called_once_with(user_id="oauth_user_789") 
+    mock_repo_class.assert_called_once_with(user_id=user_id) 

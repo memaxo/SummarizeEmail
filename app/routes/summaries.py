@@ -1,12 +1,18 @@
 from datetime import datetime, timedelta
 from typing import List
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends
 
 from .. import services
-from ..graph import graph_repo
 from ..models import BulkSummarizeRequest, BulkSummarizeResponse, SummaryResponse
 from ..config import settings
+from ..auth.dependencies import get_current_user_id
+
+# Conditional import for repository
+if settings.USE_MOCK_GRAPH_API:
+    from ..graph.mock_email_repository import MockEmailRepository as EmailRepository
+else:
+    from ..graph.email_repository import EmailRepository
 
 router = APIRouter(
     prefix="/summaries",
@@ -16,27 +22,30 @@ router = APIRouter(
 @router.post("/bulk", response_model=BulkSummarizeResponse)
 async def bulk_summarize(
     request: BulkSummarizeRequest,
-    http_request: Request
+    user_id: str = Depends(get_current_user_id)
 ):
     """
-    Summarizes multiple emails in a single request.
-    
-    In production with Custom GPT, this uses the authenticated user's ID from the OAuth token.
+    Summarizes multiple emails in a single request for the authenticated user.
     """
-    # Get user ID from OAuth token or fall back to TARGET_USER_ID
-    user_id = await services.get_user_id_from_token(http_request)
-    
-    # Use the imported graph_repo which respects mock mode
-    emails = [graph_repo.get_message(msg_id) for msg_id in request.message_ids]
+    repo = EmailRepository(user_id=user_id)
     summaries = []
-    
-    for email in emails:
-        content = email.get_full_content()
+
+    for msg_id in request.message_ids:
+        # Fetch content for each email, optionally including attachments
+        content = services.fetch_email_content(
+            msg_id,
+            user_id,
+            include_attachments=request.include_attachments
+        )
+        
+        # We don't use caching for bulk summaries to avoid complexity,
+        # but the underlying summarize_email is what's called.
         summary_text = await services.summarize_email(content)
+        
         summary_response = SummaryResponse(
             summary=summary_text,
-            message_id=email.id,
-            cached=False, # This endpoint doesn't use caching directly
+            message_id=msg_id,
+            cached=False,
             llm_provider=settings.LLM_PROVIDER,
             include_attachments=request.include_attachments
         )
@@ -45,21 +54,17 @@ async def bulk_summarize(
     return BulkSummarizeResponse(summaries=summaries, total=len(summaries))
 
 @router.post("/daily", response_model=BulkSummarizeResponse)
-async def daily_summary(http_request: Request):
+async def daily_summary(user_id: str = Depends(get_current_user_id)):
     """
-    Generates summaries for all emails from the past 24 hours.
-    
-    In production with Custom GPT, this uses the authenticated user's ID from the OAuth token.
+    Generates summaries for all emails from the past 24 hours for the authenticated user.
     """
-    # Get user ID from OAuth token or fall back to TARGET_USER_ID
-    user_id = await services.get_user_id_from_token(http_request)
+    repo = EmailRepository(user_id=user_id)
     
-    # Use the imported graph_repo which respects mock mode
     # Get emails from the last 24 hours
     today = datetime.now()
     yesterday = today - timedelta(days=1)
     
-    emails = graph_repo.list_messages(start_datetime=yesterday, end_datetime=today)
+    emails = repo.list_messages(start_datetime=yesterday, end_datetime=today)
     summaries = []
     
     for email in emails:
@@ -70,7 +75,7 @@ async def daily_summary(http_request: Request):
             message_id=email.id,
             cached=False,
             llm_provider=settings.LLM_PROVIDER,
-            include_attachments=False # Daily summary does not include attachments
+            include_attachments=False
         )
         summaries.append(summary_response)
     

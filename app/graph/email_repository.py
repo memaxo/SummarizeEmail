@@ -2,7 +2,7 @@ import logging
 import requests
 import structlog
 from typing import Dict, Any, List, Optional
-from ..auth import get_graph_token
+from ..auth.graph import get_graph_token
 from ..config import settings
 from ..exceptions import EmailNotFoundError, GraphApiError
 from .models import Email, Attachment

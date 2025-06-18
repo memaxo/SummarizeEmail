@@ -7,74 +7,116 @@ from unittest.mock import MagicMock
 
 from app.main import app
 from app.graph.models import Email, EmailBody
+from tests.auth.helpers import create_test_token
+from app.config import settings
 
 def test_summarize_bulk(client, mocker):
     """
-    Tests the POST /summaries endpoint for bulk summarization.
+    Tests the POST /summaries/bulk endpoint for bulk summarization.
     """
+    # Create auth token
+    user_id = "test_user"
+    token = create_test_token(claims={
+        "oid": user_id,
+        "aud": settings.AZURE_CLIENT_ID,
+        "iss": f"https://sts.windows.net/{settings.AZURE_TENANT_ID}/"
+    })
+    
     # 1. Mock the repository and service layers
     message_ids = ["id1", "id2"]
-    expected_digest = "This is a digest of two emails."
+    expected_summary = "This is a summary."
 
     mocker.patch(
-        "app.routes.summaries.EmailRepository.get_message",
-        return_value=Email(id="id", subject="s", body=EmailBody(content="c", contentType="t"), from_address={"emailAddress":{"address":"test@test.com"}}, toRecipients=[], sentDateTime="-")
+        "app.routes.summaries.services.fetch_email_content",
+        return_value="email content"
     )
     mocker.patch(
-        "app.routes.summaries.services.run_bulk_summarization",
-        return_value=(expected_digest, False)
+        "app.routes.summaries.services.summarize_email",
+        return_value=expected_summary
     )
 
-    # 2. Call the API
-    response = client.post("/summaries", json={"message_ids": message_ids})
+    # 2. Call the API with correct endpoint
+    response = client.post(
+        "/summaries/bulk", 
+        json={"message_ids": message_ids},
+        headers={"Authorization": f"Bearer {token}"}
+    )
 
     # 3. Assert the response
     assert response.status_code == 200
-    data = response.json()
-    assert data["digest"] == expected_digest
-    assert data["llm_provider"] == "openai" # From pytest.ini default
+    assert response.json()["total"] == 2
+    assert len(response.json()["summaries"]) == 2
+    assert all(s["summary"] == expected_summary for s in response.json()["summaries"])
 
 def test_summarize_daily_digest(client, mocker):
     """
-    Tests the GET /summaries/daily endpoint.
+    Tests the POST /summaries/daily endpoint.
     """
+    # Create auth token
+    user_id = "test_user"
+    token = create_test_token(claims={
+        "oid": user_id,
+        "aud": settings.AZURE_CLIENT_ID,
+        "iss": f"https://sts.windows.net/{settings.AZURE_TENANT_ID}/"
+    })
+    
     # 1. Mock the repository and service layers
-    expected_digest = "This is the daily digest."
+    expected_summary = "This is the daily summary."
+
+    mock_email = Email(
+        id="id", 
+        subject="s", 
+        body=EmailBody(content="c", contentType="t"), 
+        from_address={"emailAddress":{"address":"test@test.com"}}, 
+        toRecipients=[], 
+        sentDateTime="-"
+    )
     
     mocker.patch(
         "app.routes.summaries.EmailRepository.list_messages",
-        return_value=[Email(id="id", subject="s", body=EmailBody(content="c", contentType="t"), from_address={"emailAddress":{"address":"test@test.com"}}, toRecipients=[], sentDateTime="-")]
+        return_value=[mock_email]
     )
     mocker.patch(
-        "app.routes.summaries.services.run_bulk_summarization",
-        return_value=(expected_digest, False)
+        "app.routes.summaries.services.summarize_email",
+        return_value=expected_summary
     )
-    
-    # 2. Call the API
-    response = client.get("/summaries/daily")
+
+    # 2. Call the API with POST method
+    response = client.post(
+        "/summaries/daily",
+        headers={"Authorization": f"Bearer {token}"}
+    )
 
     # 3. Assert the response
     assert response.status_code == 200
-    data = response.json()
-    assert data["digest"] == expected_digest
+    assert response.json()["total"] == 1
+    assert response.json()["summaries"][0]["summary"] == expected_summary
 
 def test_summarize_daily_digest_no_emails(client, mocker):
     """
     Tests the daily digest when no emails are found.
     """
+    # Create auth token
+    user_id = "test_user"
+    token = create_test_token(claims={
+        "oid": user_id,
+        "aud": settings.AZURE_CLIENT_ID,
+        "iss": f"https://sts.windows.net/{settings.AZURE_TENANT_ID}/"
+    })
+    
     # 1. Mock the repository to return an empty list
     mocker.patch(
         "app.routes.summaries.EmailRepository.list_messages",
         return_value=[]
     )
-    mocker.patch(
-        "app.routes.summaries.services.run_bulk_summarization",
-        return_value=("No emails to summarize.", False)
+
+    # 2. Call the API with POST method
+    response = client.post(
+        "/summaries/daily",
+        headers={"Authorization": f"Bearer {token}"}
     )
-    
-    # 2. Call the API
-    response = client.get("/summaries/daily")
 
     # 3. Assert the response
     assert response.status_code == 200
-    assert response.json()["digest"] == "No emails to summarize." 
+    assert response.json()["total"] == 0
+    assert response.json()["summaries"] == [] 

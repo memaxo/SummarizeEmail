@@ -5,15 +5,21 @@ import fakeredis
 
 from app.main import app
 from app.graph.models import Email, EmailBody
+from tests.auth.helpers import create_test_token
+from app.config import settings
 
 def test_search_emails_no_filters(client, mocker):
     """
     Tests the GET /emails endpoint with no filters, expecting a default call.
     """
-    # Mock the user ID extraction
-    mocker.patch(
-        "app.routes.emails.get_user_id_from_token",
-        return_value="test_user"
+    # Create a valid token for authentication
+    user_id = "test_user"
+    token = create_test_token(
+        claims={
+            "oid": user_id,
+            "aud": settings.AZURE_CLIENT_ID,
+            "iss": f"https://sts.windows.net/{settings.AZURE_TENANT_ID}/"
+        }
     )
     
     # 1. Mock the repository layer
@@ -22,8 +28,11 @@ def test_search_emails_no_filters(client, mocker):
         return_value=[]
     )
 
-    # 2. Call the API
-    response = client.get("/emails/")
+    # 2. Call the API with authentication
+    response = client.get(
+        "/emails/",
+        headers={"Authorization": f"Bearer {token}"}
+    )
     
     # 3. Assert the response and the repository call
     assert response.status_code == 200
@@ -42,6 +51,16 @@ def test_search_emails_with_filters(client, mocker):
     """
     Tests the GET /emails endpoint with all filters applied.
     """
+    # Create a valid token for authentication
+    user_id = "test_user"
+    token = create_test_token(
+        claims={
+            "oid": user_id,
+            "aud": settings.AZURE_CLIENT_ID,
+            "iss": f"https://sts.windows.net/{settings.AZURE_TENANT_ID}/"
+        }
+    )
+    
     # 1. Mock the repository layer
     mock_list_messages = mocker.patch(
         "app.routes.emails.EmailRepository.list_messages",
@@ -61,8 +80,12 @@ def test_search_emails_with_filters(client, mocker):
         "limit": "50"
     }
 
-    # 3. Call the API
-    response = client.get("/emails/", params=params)
+    # 3. Call the API with authentication
+    response = client.get(
+        "/emails/", 
+        params=params,
+        headers={"Authorization": f"Bearer {token}"}
+    )
     
     # 4. Assert the response and that the correct parameters were passed to the repo
     assert response.status_code == 200
