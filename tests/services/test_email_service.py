@@ -208,25 +208,46 @@ class TestEmailService:
         mock_redis.get.return_value = None
         
         with patch('app.services.email._get_llm') as mock_get_llm:
-            with patch('app.services.email.load_summarize_chain') as mock_load_chain:
-                # Setup mocks
-                mock_llm = MagicMock()
-                mock_get_llm.return_value = mock_llm
+            # Setup mocks
+            mock_llm = MagicMock()
+            mock_llm.model_name = "gpt-4o-mini"
+            mock_get_llm.return_value = mock_llm
+            
+            # Mock text splitter
+            with patch('app.services.email._get_text_splitter') as mock_splitter:
+                mock_text_splitter = MagicMock()
+                mock_text_splitter.split_documents.return_value = [Document(page_content="Test content")]
+                mock_splitter.return_value = mock_text_splitter
                 
-                mock_chain = MagicMock()
-                mock_chain.run.return_value = "Generated summary"
-                mock_load_chain.return_value = mock_chain
-                
-                # Test
-                summary, from_cache = await run_summarization_chain("Test content", mock_redis)
-                
-                # Assert
-                assert summary == "Generated summary"
-                assert from_cache is False
-                mock_redis.set.assert_called_once()
+                # Mock RunnableParallel for map stage
+                with patch('app.services.email.RunnableParallel') as mock_parallel:
+                    mock_parallel_instance = MagicMock()
+                    mock_parallel_instance.batch.return_value = [{"out": "Mapped content"}]
+                    mock_parallel.return_value = mock_parallel_instance
+                    
+                    # Mock the reduce chain
+                    mock_chain = MagicMock()
+                    mock_chain.invoke.return_value = "Generated summary"
+                    mock_chain.with_config.return_value = mock_chain
+                    
+                    # Mock prompt and parser
+                    mock_prompt = MagicMock()
+                    mock_parser = MagicMock()
+                    mock_prompt.__or__ = MagicMock(return_value=MagicMock(__or__=MagicMock(return_value=mock_chain)))
+                    
+                    with patch('app.services.email.MAP_PROMPT', mock_prompt):
+                        with patch('app.services.email.REDUCE_PROMPT', mock_prompt):
+                            with patch('app.services.email.StrOutputParser', return_value=mock_parser):
+                                # Test
+                                summary, from_cache = await run_summarization_chain("Test content", mock_redis)
+                                
+                                # Assert
+                                assert summary == "Generated summary"
+                                assert from_cache is False
+                                mock_redis.set.assert_called_once()
     
     def test_run_rag_chain_success(self):
-        """Test RAG chain execution with LCEL."""
+        """Test RAG chain execution with LCEL and parallel processing."""
         # Setup
         test_docs = [
             Document(page_content="Doc 1", metadata={"id": "1"}),
@@ -234,38 +255,52 @@ class TestEmailService:
         ]
         
         with patch('app.services.email._get_llm') as mock_get_llm:
-            # Setup mock LLM that returns proper string responses
+            # Setup mock LLM
             mock_llm = MagicMock()
-            
-            # Mock the chain invoke to return strings
-            def mock_invoke(inputs):
-                # For map chain calls
-                if "context" in inputs:
-                    return "Relevant text from document"
-                # For reduce chain calls
-                elif "doc_summaries" in inputs:
-                    return "RAG answer"
-                return ""
-            
-            # Set up the mock to work with LCEL pipe operator
-            mock_chain = MagicMock()
-            mock_chain.invoke = MagicMock(side_effect=mock_invoke)
-            
-            # Mock the pipe operations for LCEL
-            mock_prompt = MagicMock()
-            mock_parser = MagicMock()
-            mock_prompt.__or__ = MagicMock(return_value=MagicMock(__or__=MagicMock(return_value=mock_chain)))
-            
+            mock_llm.model_name = "gemini-2.5-flash"  # Add model_name attribute
             mock_get_llm.return_value = mock_llm
             
-            with patch('app.services.email.RAG_MAP_PROMPT', mock_prompt):
-                with patch('app.services.email.RAG_REDUCE_PROMPT', mock_prompt):
-                    with patch('app.services.email.StrOutputParser', return_value=mock_parser):
-                        # Test
-                        result = run_rag_chain("What is the status?", test_docs)
-                        
-                        # Assert
-                        assert result == "RAG answer"
+            # Mock the text splitter
+            with patch('app.services.email._get_text_splitter') as mock_splitter:
+                mock_text_splitter = MagicMock()
+                mock_text_splitter.split_documents.return_value = test_docs
+                mock_splitter.return_value = mock_text_splitter
+                
+                # Mock RunnableParallel
+                with patch('app.services.email.RunnableParallel') as mock_parallel:
+                    # Mock the batch method to return proper results
+                    mock_parallel_instance = MagicMock()
+                    mock_parallel_instance.batch.return_value = [
+                        {"out": "Relevant text from doc 1"},
+                        {"out": "Relevant text from doc 2"}
+                    ]
+                    mock_parallel_instance.with_config.return_value = mock_parallel_instance
+                    mock_parallel.return_value = mock_parallel_instance
+                    
+                    # Mock the final reduce chain
+                    def mock_invoke(inputs):
+                        if "doc_summaries" in inputs:
+                            return "RAG answer"
+                        return ""
+                    
+                    mock_chain = MagicMock()
+                    mock_chain.invoke = MagicMock(side_effect=mock_invoke)
+                    mock_chain.with_config.return_value = mock_chain
+                    
+                    # Mock the prompt and parser chain construction
+                    mock_prompt = MagicMock()
+                    mock_parser = MagicMock()
+                    mock_prompt.__or__ = MagicMock(return_value=MagicMock(__or__=MagicMock(return_value=mock_chain)))
+                    
+                    with patch('app.services.email.RAG_MAP_PROMPT', mock_prompt):
+                        with patch('app.services.email.RAG_REDUCE_PROMPT', mock_prompt):
+                            with patch('app.services.email.StrOutputParser', return_value=mock_parser):
+                                # Test
+                                result = run_rag_chain("What is the status?", test_docs)
+                                
+                                # Assert
+                                assert result == "RAG answer"
+                                mock_parallel_instance.batch.assert_called_once()
     
     def test_fetch_email_content_error_handling(self):
         """Test error handling in fetch_email_content."""

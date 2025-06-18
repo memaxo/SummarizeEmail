@@ -85,6 +85,17 @@ class Settings(BaseSettings):
     # RAG Configuration
     RAG_INGESTION_INTERVAL_HOURS: int = 24  # How often to ingest emails for RAG
     RAG_TOKEN_MAX: int = 16000  # Maximum tokens for RAG chain (safety net for Gemini's 30k context)
+    
+    # --- RAG tokenisation helpers ---
+    # Context-window sizes for supported chat models
+    MODEL_CONTEXT_WINDOWS: dict = {
+        "gemini-2.5-flash": 1_048_576,
+        "gpt-4o-mini": 128_000,
+        "gpt-4.1": 1_000_000,
+    }
+    # Recommended chunk ≈ 2 % of context window (hard-capped below)
+    CHUNK_SIZE_RATIO: float = 0.02
+    DEFAULT_CHUNK_OVERLAP: int = 200
 
 
 @lru_cache()
@@ -93,12 +104,8 @@ def get_settings() -> Settings:
     Returns the application settings instance.
     Uses lru_cache to ensure settings are loaded only once.
     """
-    # Configure logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
-    logging.info("Loading application settings...")
+    # Logging is centrally configured in app.logger
+    logging.getLogger(__name__).info("Loading application settings...")
     return Settings()
 
 

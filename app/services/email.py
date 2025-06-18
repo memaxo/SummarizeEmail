@@ -1,6 +1,6 @@
 from redis.asyncio import Redis
 import structlog
-from typing import List, Tuple, Dict, Any, Optional, Union
+from typing import List, Tuple, Dict, Any, Optional, Union, AsyncGenerator
 
 import requests
 from langchain_community.chat_models import ChatOllama
@@ -9,10 +9,11 @@ from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_google_vertexai import ChatVertexAI
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain.chains.summarize import load_summarize_chain
+from langchain_text_splitters import TokenTextSplitter, RecursiveCharacterTextSplitter
 from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnableParallel
+import tiktoken
 from pydantic import BaseModel, Field
 from fastapi import Request
 import hashlib
@@ -50,6 +51,36 @@ class EmailSummary(BaseModel):
     key_points: List[str] = Field(description="List of key points from the email")
     action_items: List[str] = Field(description="List of action items mentioned in the email", default_factory=list)
     sentiment: str = Field(description="Overall sentiment: positive, negative, or neutral")
+
+
+def _num_tokens(text: str, enc_name: str = "cl100k_base") -> int:
+    """Return exact token count using tiktoken."""
+    enc = tiktoken.get_encoding(enc_name)
+    return len(enc.encode(text))
+
+
+def _get_text_splitter(model_name: str) -> TokenTextSplitter:
+    """Token-aware splitter sized relative to model context window."""
+    ctx_window = settings.MODEL_CONTEXT_WINDOWS.get(model_name, settings.RAG_TOKEN_MAX)
+    chunk_size = min(8192, int(ctx_window * settings.CHUNK_SIZE_RATIO))
+    overlap = min(settings.DEFAULT_CHUNK_OVERLAP, max(32, chunk_size // 10))
+    return TokenTextSplitter(
+        encoding_name="cl100k_base",
+        chunk_size=chunk_size,
+        chunk_overlap=overlap,
+    )
+
+
+def _get_model_name(llm: BaseChatModel) -> str:
+    """Get the model name from the LLM instance with provider-aware defaults."""
+    if hasattr(llm, "model_name"):
+        return llm.model_name
+    elif settings.LLM_PROVIDER == "openai":
+        return settings.OPENAI_MODEL_NAME
+    elif settings.LLM_PROVIDER == "gemini":
+        return settings.GEMINI_MODEL_NAME
+    else:
+        return settings.OLLAMA_MODEL
 
 
 def _get_llm() -> BaseChatModel:
@@ -194,20 +225,30 @@ async def run_summarization_chain(content: str, redis_client: Optional[Redis] = 
     # 2. If not cached, run the full summarization
     llm = _get_llm()
     docs = [Document(page_content=content)]
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=4000, chunk_overlap=200)
+    model_name = _get_model_name(llm)
+    text_splitter = _get_text_splitter(model_name)
     split_docs = text_splitter.split_documents(docs)
     
-    # Use our centralized prompts
-    chain = load_summarize_chain(
-        llm, 
-        chain_type="map_reduce",
-        map_prompt=MAP_PROMPT,
-        combine_prompt=REDUCE_PROMPT
-    )
+    # LCEL map-reduce (no deprecated chain)
+    map_runnable = (
+        MAP_PROMPT
+        | llm
+        | StrOutputParser()
+    ).with_config(run_name="summary_map", tags=["summary"])
+
+    reduce_runnable = (
+        REDUCE_PROMPT
+        | llm
+        | StrOutputParser()
+    ).with_config(run_name="summary_reduce", tags=["summary"])
 
     logger.info(f"Running summarization chain with {len(split_docs)} documents...")
     try:
-        summary = chain.run(split_docs)
+        map_outputs = RunnableParallel({"out": map_runnable}).batch(
+            [{"text": d.page_content} for d in split_docs]
+        )
+        intermediate = "\n\n".join(o["out"] for o in map_outputs)
+        summary = reduce_runnable.invoke({"text": intermediate})
         logger.info("Successfully generated summary.")
         
         # 3. Store the new result in the cache
@@ -240,36 +281,33 @@ def run_rag_chain(question: str, context_docs: List[Document]) -> str:
     llm = _get_llm()
     
     # Split documents if they exceed token limits
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=4000,
-        chunk_overlap=200,
-        separators=["\n\n", "\n", " ", ""]
-    )
+    model_name = _get_model_name(llm)
+    text_splitter = _get_text_splitter(model_name)
     
     # Ensure all documents are properly chunked
-    split_docs = []
+    split_docs: List[Document] = []
     for doc in context_docs:
-        if len(doc.page_content) > 4000:
-            split_docs.extend(text_splitter.split_documents([doc]))
-        else:
-            split_docs.append(doc)
+        split_docs.extend(text_splitter.split_documents([doc]))
     
     logger.info(f"Processing {len(split_docs)} document chunks from {len(context_docs)} original documents")
     
-    # Map step: Extract relevant information from each document
-    map_results = []
-    for doc in split_docs:
-        try:
-            map_chain = RAG_MAP_PROMPT | llm | StrOutputParser()
-            result = map_chain.invoke({
-                "context": doc.page_content,
-                "question": question
-            })
-            if result.strip():  # Only keep non-empty results
-                map_results.append(result)
-        except Exception as e:
-            logger.warning(f"Error processing document chunk: {e}")
-            continue
+    # Map step (concurrent) using RunnableParallel
+    map_runnable = (
+        RAG_MAP_PROMPT
+        | llm
+        | StrOutputParser()
+    ).with_config(run_name="rag_map", tags=["rag", "map"])
+
+    batch_inputs = [
+        {"context": d.page_content, "question": question} for d in split_docs
+    ]
+
+    parallel_map = RunnableParallel({"out": map_runnable}).with_config(
+        run_name="rag_map_batch", tags=["rag", "map"]
+    )
+
+    batch_outputs = parallel_map.batch(batch_inputs)
+    map_results = [item["out"] for item in batch_outputs if item["out"].strip()]
     
     if not map_results:
         return "No relevant information found in the provided documents."
@@ -278,14 +316,18 @@ def run_rag_chain(question: str, context_docs: List[Document]) -> str:
     combined_results = "\n\n---\n\n".join(map_results)
     
     # Check if we need to collapse further due to token limits
-    # Rough estimate: 4 chars per token
-    estimated_tokens = len(combined_results) // 4
+    estimated_tokens = _num_tokens(combined_results)
+    token_limit = settings.MODEL_CONTEXT_WINDOWS.get(model_name, settings.RAG_TOKEN_MAX)
     
-    if estimated_tokens > settings.RAG_TOKEN_MAX:
-        logger.info(f"Combined results exceed token limit ({estimated_tokens} > {settings.RAG_TOKEN_MAX}), applying recursive collapse")
+    if estimated_tokens > token_limit:
+        logger.info(f"Combined results exceed token limit ({estimated_tokens} > {token_limit}), applying recursive collapse")
         
         # Recursive collapse if results are too long
-        collapse_chain = RAG_REDUCE_PROMPT | llm | StrOutputParser()
+        collapse_chain = (
+            RAG_REDUCE_PROMPT
+            | llm
+            | StrOutputParser()
+        ).with_config(run_name="rag_reduce_partial", tags=["rag", "reduce"])
         
         # Split combined results into chunks and reduce iteratively
         result_chunks = text_splitter.split_text(combined_results)
@@ -313,7 +355,11 @@ def run_rag_chain(question: str, context_docs: List[Document]) -> str:
     # Final reduce step
     logger.info("Running final reduce step")
     try:
-        reduce_chain = RAG_REDUCE_PROMPT | llm | StrOutputParser()
+        reduce_chain = (
+            RAG_REDUCE_PROMPT
+            | llm
+            | StrOutputParser()
+        ).with_config(run_name="rag_reduce", tags=["rag", "reduce"])
         answer = reduce_chain.invoke({
             "doc_summaries": combined_results,
             "question": question
@@ -448,4 +494,37 @@ class EmailService:
         if "body" in email and "content" in email["body"]:
             content_parts.append(f"\n{email['body']['content']}")
         
-        return "\n".join(content_parts) 
+        return "\n".join(content_parts)
+
+
+# ---------------------------------------------------------------------------
+# Async streaming variant (first-token latency optimisation)
+# ---------------------------------------------------------------------------
+
+async def astream_rag_chain(
+    question: str, context_docs: List[Document]
+) -> AsyncGenerator[str, None]:
+    """Yield answer tokens incrementally using reduce_runnable.astream()."""
+    llm = _get_llm()
+    model_name = _get_model_name(llm)
+    text_splitter = _get_text_splitter(model_name)
+
+    splits: List[Document] = []
+    for doc in context_docs:
+        splits.extend(text_splitter.split_documents([doc]))
+
+    map_run = RAG_MAP_PROMPT | llm | StrOutputParser()
+    map_batch = RunnableParallel({"out": map_run}).batch(
+        [{"context": d.page_content, "question": question} for d in splits]
+    )
+    snippets = [o["out"] for o in map_batch if o["out"].strip()]
+    
+    if not snippets:
+        yield "No relevant information found in the provided documents."
+        return
+        
+    merged = "\n\n---\n\n".join(snippets)
+
+    reduce_run = RAG_REDUCE_PROMPT | llm | StrOutputParser()
+    async for token in reduce_run.astream({"doc_summaries": merged, "question": question}):
+        yield token 
